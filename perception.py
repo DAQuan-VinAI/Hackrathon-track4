@@ -173,6 +173,55 @@ def draw_detections(rgb, dets):
     return img
 
 
+# ---------------------------------------------------------------- 3D overlay in the PyBullet window
+
+_ITEMS = []               # debug item ids drawn by show_in_3d, removed on the next call
+RGB3D = {"red": (0.95, 0.15, 0.15), "green": (0.1, 0.75, 0.2), "blue": (0.15, 0.35, 1.0)}
+SUSPICIOUS_RGB = (1.0, 0.55, 0.0)
+
+
+def _ground_footprint():
+    """World corners of the image on the ground plane (z = TABLE_Z): what the camera can see."""
+    view, proj = _matrices()
+    W, H = CAM["W"], CAM["H"]
+    eye = np.array(CAM["eye"], float)
+    corners = []
+    for u, v in ((0, 0), (W - 1, 0), (W - 1, H - 1), (0, H - 1)):
+        far = pixel_to_world(u, v, 1.0, view, proj, W, H)     # a point on the pixel's ray
+        t = (eye[2] - TABLE_Z) / (eye[2] - far[2])
+        corners.append(eye + t * (far - eye))
+    return eye, corners
+
+
+def show_in_3d(dets):
+    """Draw what perception sees into the PyBullet GUI: the camera frustum, one ray per detection
+    from the camera to the 3D point, and a labeled marker (orange = suspicious). GUI only."""
+    if p.getConnectionInfo().get("connectionMethod") != p.GUI:
+        return
+    for i in _ITEMS:
+        p.removeUserDebugItem(i)
+    _ITEMS.clear()
+    line = lambda a, b, rgb, w=1.5: _ITEMS.append(p.addUserDebugLine(a, b, rgb, lineWidth=w))
+    text = lambda s, pos, rgb, size=1.1: _ITEMS.append(p.addUserDebugText(s, pos, rgb, textSize=size))
+
+    eye, corners = _ground_footprint()
+    gray = (0.35, 0.35, 0.45)
+    for i, c in enumerate(corners):
+        line(eye, c, gray, 1)
+        line(c, corners[(i + 1) % 4], gray, 2)
+    text("overhead camera", eye + (0, 0, 0.03), (0.2, 0.2, 0.3), 1.2)
+
+    for d in dets:
+        rgb = SUSPICIOUS_RGB if d.suspicious else RGB3D.get(d.color, (1, 1, 1))
+        xyz = np.array(d.xyz)
+        line(eye, xyz, rgb, 1)                                 # pixel -> ray -> 3D point (inv(P V) + depth)
+        s = CUBE * 0.7                                         # cross on the top face
+        line(xyz - (s, 0, 0), xyz + (s, 0, 0), rgb, 3)
+        line(xyz - (0, s, 0), xyz + (0, s, 0), rgb, 3)
+        label = f"? {d.reason}" if d.suspicious else f"{d.color} ({d.xyz[0]:.3f}, {d.xyz[1]:.3f})"
+        text(label, xyz + (0, 0, 0.05), rgb)
+
+
 # ---------------------------------------------------------------- evaluation (ground truth only here)
 
 def _match(dets, gt, radius=0.02):

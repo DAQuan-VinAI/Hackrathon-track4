@@ -34,6 +34,11 @@ def _connect(gui):
     if gui:
         p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 0)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 1)            # GUI only; the TINY camera has no shadows
+        try:
+            p.configureDebugVisualizer(rgbBackground=[0.93, 0.95, 0.98])
+        except TypeError:                                               # older pybullet builds
+            pass
         # look from behind the robot so screen left/right matches the operator's hand
         p.resetDebugVisualizerCamera(cameraDistance=0.95, cameraYaw=VIEW_YAW, cameraPitch=-55,
                                      cameraTargetPosition=[0.5, -0.1, 0.0])
@@ -55,6 +60,34 @@ def _make_ground():
     ground = p.createMultiBody(0, col, vis, [0, 0, TABLE_Z])
     p.changeDynamics(ground, -1, lateralFriction=1.0)
     return ground
+
+
+def _visual_box(half, pos, rgba):
+    """Decoration only: no collision shape, so physics and grasping are unchanged."""
+    vis = p.createVisualShape(p.GEOM_BOX, halfExtents=half, rgbaColor=rgba)
+    return p.createMultiBody(0, -1, vis, pos)
+
+
+def _decorate(gui):
+    """Work mat, safety border, robot base plate; bin labels in the GUI.
+
+    Built in GUI and DIRECT alike, so the overhead camera sees the same scene in the demo and in
+    the benchmark. Low saturation (mat) or hue outside every HSV range (yellow, H ~25) keeps the
+    detector unaffected; tops sit 0.5 mm above the ground to avoid z-fighting."""
+    (x0, x1), (y0, y1) = WORKSPACE["x"], WORKSPACE["y"]
+    m, t, z = 0.03, 0.006, TABLE_Z + 0.0005
+    cx, cy, hx, hy = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2 + m, (y1 - y0) / 2 + m
+    _visual_box([hx, hy, 0.0005], [cx, cy, z - 0.0005], [0.62, 0.64, 0.67, 1])      # work mat
+    yellow = [1.0, 0.85, 0.0, 1]
+    for sx in (-1, 1):                                                                # safety border
+        _visual_box([t, hy + t, 0.0006], [cx + sx * (hx + t), cy, z - 0.0004], yellow)
+    for sy in (-1, 1):
+        _visual_box([hx + t, t, 0.0006], [cx, cy + sy * (hy + t), z - 0.0004], yellow)
+    _visual_box([0.13, 0.13, 0.0005], [0, 0, z - 0.0005], [0.25, 0.27, 0.3, 1])      # robot base plate
+    if gui:
+        for color, (bx, by) in BINS.items():
+            p.addUserDebugText(color.upper(), [bx - 0.03, by, 0.16], RGBA[color][:3], textSize=1.4)
+        p.addUserDebugText("VinSort", [0.0, 0.22, 0.02], [0.2, 0.25, 0.35], textSize=1.6)
 
 
 def _load_robot():
@@ -118,6 +151,7 @@ def build_scene(seed, n_objects=6, gui=True, settle_steps=SIM_HZ):
     """
     _connect(gui)
     _make_ground()
+    _decorate(gui)
     robot = _load_robot()
     bins = {c: _make_bin(c) for c in COLORS}
 
