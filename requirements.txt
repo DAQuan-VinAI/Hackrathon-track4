@@ -1,0 +1,5 @@
+pybullet==3.2.7           # Mac arm64: builds from source, needs Xcode Command Line Tools
+mediapipe==0.10.21        # >=1.0 removed mp.solutions
+opencv-python==4.11.0.86
+numpy==1.26.4             # mediapipe 0.10.21 needs numpy<2
+matplotlib
