@@ -15,17 +15,22 @@ import time
 import numpy as np
 import pybullet as p
 
-from common import BIN_SIZE, BINS, CUBE, WORKSPACE
+from common import BIN_SIZE, BINS, CUBE, SIM_HZ, WORKSPACE
 
-STEP_LIMIT = 0.015      # max EE target change per frame (m): no jump when entering TELEOP
+# Speeds are per frame at NOMINAL_FPS and scaled by the real frame time, so the arm moves at
+# the same speed in m/s when webcam + MediaPipe + rendering drop the loop to 10-20 FPS.
+NOMINAL_FPS = 30
+MAX_DT = 0.1            # longer frames (a hiccup) are not caught up, the arm would lurch
+STEP_LIMIT = 0.025      # max EE target change per frame (m, ~0.75 m/s): no jump when entering TELEOP.
+                        # PHAN_CONG said 1.5 cm; raised because the operators found it too slow
 EMA = 0.3               # weight of the new palm sample: smoother but adds lag
 DEAD = 0.08             # joystick dead-zone half-size, fraction of the frame
-V_MAX = 0.012           # max XY speed (m/frame, ~0.36 m/s at 30 FPS) at the frame edge
-Z_STEP = 0.012          # index only: raise; V sign: lower (m/frame)
+V_MAX = 0.02            # max XY speed (m/frame, ~0.6 m/s) at the frame edge
+Z_STEP = 0.018          # index only: raise; V sign: lower (m/frame, ~0.54 m/s)
 START_Z = 0.20
 GRIP_ON, GRIP_OFF = 0.25, 0.40    # pinch ratio thresholds, fallback when the hand is neither fist nor open
 GRIP_FRAMES = 3                   # a grab/release must be seen this many frames in a row
-KEY_STEP = 0.01                   # keyboard: one key event moves 1 cm (main.read_key repeats held keys)
+KEY_STEP = 0.02                   # keyboard: one key event moves 2 cm (main.read_key repeats held keys)
 CENTER = ((WORKSPACE["x"][0] + WORKSPACE["x"][1]) / 2, (WORKSPACE["y"][0] + WORKSPACE["y"][1]) / 2)
 
 # Assisted grab (PHAN_CONG 6C "Nếu trễ thì cắt": grab gesture -> the arm descends, grabs, lifts).
@@ -43,16 +48,17 @@ BIN_ZONE = dict(x=(min(b[0] for b in BINS.values()) - 0.07, max(b[0] for b in BI
                 y=(min(b[1] for b in BINS.values()) - 0.05, WORKSPACE["y"][0]), z_min=0.14)
 
 # Four views for the HUD (GUI only), a 2x2 grid in state["views"]. One view is re-rendered per
-# teleop frame (round robin), so each refreshes at ~7 Hz and a frame costs one small render.
+# RENDER_EVERY frames (round robin), so a frame costs at most one small render.
 VIEWS = [
     # top and front are widened to y = -0.6 so the bins are in view too
-    ("TOP (screen right = robot's right)", dict(eye=(0.50, -0.17, 1.15), target=(0.50, -0.17, 0.0), up=(1, 0, 0), fov=45)),
-    ("SIDE (robot on the right)", dict(eye=(0.55, 1.05, 0.20), target=(0.55, 0.0, 0.18), up=(0, 0, 1), fov=32)),
-    ("FRONT (facing the robot)", dict(eye=(1.40, -0.17, 0.30), target=(0.45, -0.17, 0.10), up=(0, 0, 1), fov=48)),
+    ("TOP (right = robot right)", dict(eye=(0.50, -0.17, 1.15), target=(0.50, -0.17, 0.0), up=(1, 0, 0), fov=45)),
+    ("SIDE (robot on right)", dict(eye=(0.55, 1.05, 0.20), target=(0.55, 0.0, 0.18), up=(0, 0, 1), fov=32)),
+    ("FRONT (facing robot)", dict(eye=(1.40, -0.17, 0.30), target=(0.45, -0.17, 0.10), up=(0, 0, 1), fov=48)),
     ("3D", dict(eye=(1.15, 0.75, 0.65), target=(0.50, -0.05, 0.05), up=(0, 0, 1), fov=45)),
 ]
-VIEW_PX = 300           # each tile is VIEW_PX x VIEW_PX
-FOOTER = 44             # status bar under the grid: height and hint
+VIEW_PX = 240           # each tile is VIEW_PX x VIEW_PX (main.py scales the grid to the HUD height)
+RENDER_EVERY = 2        # re-render one tile every N frames: rendering competes with MediaPipe for frame time
+FOOTER = 62             # status bar under the grid: height, FPS and hint
 
 
 def clamp_ws(xyz):
@@ -162,6 +168,7 @@ class HandTracker:
         self.pos = np.array([*CENTER, START_Z])   # integrated target; teleop_step resets it to the EE
         self.palm = None                          # smoothed palm center (image 0..1)
         self.yaw = -90.0                          # camera yaw, set by teleop_step every frame
+        self.scale = 1.0                          # real frame time / nominal, set by teleop_step every frame
         self.t0 = time.perf_counter()
 
     def read(self, key=-1):
@@ -190,8 +197,8 @@ class HandTracker:
         # freeze XY while changing height or confirming a grab/release: the hand-shape change
         # would otherwise drag the arm sideways
         frozen = up or down or self.grip.candidate is not None
-        vel = np.zeros(2) if frozen else joystick(self.palm, self.yaw)
-        self.pos = clamp_ws((*(self.pos[:2] + vel), self.pos[2] + Z_STEP * (up - down)))
+        vel = np.zeros(2) if frozen else joystick(self.palm, self.yaw) * self.scale
+        self.pos = clamp_ws((*(self.pos[:2] + vel), self.pos[2] + Z_STEP * self.scale * (up - down)))
         action = "UP" if up else "DOWN" if down else "GRAB" if grip else "MOVE"
         self._overlay(frame, action, vel)
         return self.pos.copy(), grip, frame, (time.perf_counter() - self.t0) * 1000
@@ -252,20 +259,23 @@ class KeyboardTracker:
 
 def teleop_step(robot, tracker, object_ids, state):
     """One frame of teleop. state: {key, target, cid, grip, hand, frame, latency_ms, msg}. Returns state."""
-    from controller import ee_pos, grasp, release, servo_ee
+    from controller import ee_pos, grasp, release
     from scene import camera_yaw
     if state.get("target") is None:
         state.update(target=np.array(ee_pos(robot)), cid=None, grip=False, latency_ms=0.0)
         if hasattr(tracker, "reset"):
             tracker.reset(state["target"])                # start where the arm is, grip open: no jump, no stale grab
+    _frame_timing(state)
     if hasattr(tracker, "yaw"):
         tracker.yaw = camera_yaw()                        # controls follow the view the operator chose
+    if hasattr(tracker, "scale"):
+        tracker.scale = state["scale"]
     xyz, grip, frame, _ = tracker.read(state.get("key", -1))
     state["frame"] = frame
     state["hand"] = xyz is not None
     near = nearest_cube(ee_pos(robot), object_ids)
     if xyz is None:
-        servo_ee(robot, state["target"])                  # hold position, keep the part (assist paused too)
+        _servo(robot, state)                              # hold position, keep the part (assist paused too)
         state["msg"] = "no hand: holding" + (" + part" if state.get("cid") is not None else "")
     elif state.get("assist") is not None:
         if grip:
@@ -275,8 +285,8 @@ def teleop_step(robot, tracker, object_ids, state):
             _sync_tracker(tracker, state["target"])
         state["grip"] = grip
     else:
-        state["target"] = rate_limit(state["target"], clamp_ws(xyz))
-        servo_ee(robot, state["target"])
+        state["target"] = rate_limit(state["target"], clamp_ws(xyz), STEP_LIMIT * state["scale"])
+        _servo(robot, state)
         if grip and state.get("cid") is None:             # suction stays on while the fist is held
             state["cid"] = grasp(robot, object_ids)
             if state["cid"] is not None:
@@ -298,6 +308,23 @@ def teleop_step(robot, tracker, object_ids, state):
         cv2.putText(frame, state["msg"], (10, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
         cv2.putText(frame, state["msg"], (10, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     return state
+
+
+def _frame_timing(state):
+    """Real time since the last teleop frame -> state["scale"] (vs NOMINAL_FPS) and state["fps"].
+    Never below 1: when the loop runs faster than nominal, behave exactly as at NOMINAL_FPS."""
+    now = time.perf_counter()
+    dt = now - state.get("t_prev", now - 1 / NOMINAL_FPS)
+    state["t_prev"] = now
+    state["fps"] = 0.8 * state.get("fps", NOMINAL_FPS) + 0.2 / max(dt, 1 / 60)   # display only
+    state["scale"] = float(np.clip(dt * NOMINAL_FPS, 1.0, MAX_DT * NOMINAL_FPS))
+
+
+def _servo(robot, state):
+    """Advance the simulation by the real frame time (not a fixed 1/30 s): at 15 FPS a fixed
+    step count ran the arm in slow motion."""
+    from controller import servo_ee
+    servo_ee(robot, state["target"], n_steps=int(round(SIM_HZ / NOMINAL_FPS * state["scale"])))
 
 
 def nearest_cube(ee, object_ids):
@@ -322,7 +349,7 @@ def _sync_tracker(tracker, xyz):
 
 def _assist_step(robot, tracker, state):
     """Assisted grab: align over the cube at the current height, descend, attach, lift to CARRY_Z."""
-    from controller import ee_pos, grasp, servo_ee
+    from controller import ee_pos, grasp
     a = state["assist"]
     a["frames"] += 1
     x, y, z = p.getBasePositionAndOrientation(a["id"])[0]
@@ -342,8 +369,8 @@ def _assist_step(robot, tracker, state):
         if abs(ee[2] - goal[2]) < 0.01:
             state["assist"] = None
             _sync_tracker(tracker, goal)
-    state["target"] = rate_limit(state["target"], clamp_ws(goal))
-    servo_ee(robot, state["target"])
+    state["target"] = rate_limit(state["target"], clamp_ws(goal), STEP_LIMIT * state["scale"])
+    _servo(robot, state)
     if state.get("assist") is not None and a["frames"] > ASSIST_FRAMES:
         state["assist"], state["msg"] = None, "auto-grab failed"
         _sync_tracker(tracker, state["target"])
@@ -411,8 +438,10 @@ def _draw_aids(robot, state, near):
     _LINE["id"], _LINE["t"] = p.addUserDebugLine(ee, (ee[0], ee[1], 0.0), **kw), now
 
     tiles = state.setdefault("tiles", [None] * len(VIEWS))
-    i = state["view_i"] = (state.get("view_i", -1) + 1) % len(VIEWS)
-    tiles[i] = _render_view(cv2, i, ee, near, holding, bgr)
+    state["aid_i"] = state.get("aid_i", -1) + 1
+    if state["aid_i"] % RENDER_EVERY == 0:                # one tile every RENDER_EVERY frames
+        i = state["view_i"] = (state.get("view_i", -1) + 1) % len(VIEWS)
+        tiles[i] = _render_view(cv2, i, ee, near, holding, bgr)
     blank = np.full((VIEW_PX, VIEW_PX, 3), 60, np.uint8)
     t = [x if x is not None else blank for x in tiles]
     grid = np.vstack([np.hstack(t[0:2]), np.hstack(t[2:4])])
@@ -429,8 +458,9 @@ def _draw_aids(robot, state, near):
     else:
         hint = "no cube in the workspace"
     bar = np.full((FOOTER, grid.shape[1], 3), 30, np.uint8)
-    cv2.putText(bar, f"z = {ee[2]:.2f} m", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (230, 230, 230), 2, cv2.LINE_AA)
-    cv2.putText(bar, hint, (170, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, bgr, 2, cv2.LINE_AA)
+    cv2.putText(bar, f"z = {ee[2]:.2f} m    {state.get('fps', 0):.0f} FPS", (10, 24),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (230, 230, 230), 2, cv2.LINE_AA)
+    cv2.putText(bar, hint, (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.6, bgr, 2, cv2.LINE_AA)
     state["views"] = np.vstack([grid, bar])
 
 
