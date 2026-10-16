@@ -16,11 +16,35 @@ def connect(gui=True):
     if not p.isConnected():
         p.connect(p.GUI if gui else p.DIRECT)
         if gui:
+            # Keyboard shortcuts off (w/a/s/g... clash with our keys). Mouse camera still works:
+            # Ctrl+left drag rotate, middle drag pan, wheel zoom, left drag = move a part.
             p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 0)
             p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-            # view from behind the robot: screen left/right == operator left/right
-            p.resetDebugVisualizerCamera(1.3, -90, -40, (0.45, 0, 0.1))
+            p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 1)
+            reset_view()
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+
+HOME_VIEW = (1.3, -90, -40, (0.45, 0, 0.1))  # distance, yaw, pitch, target: behind the robot
+
+
+def reset_view():
+    p.resetDebugVisualizerCamera(*HOME_VIEW)
+
+
+def camera_yaw():
+    """Current GUI camera yaw (deg). DIRECT mode / no GUI: the home view yaw."""
+    try:
+        return float(p.getDebugVisualizerCamera()[8])
+    except Exception:
+        return HOME_VIEW[1]
+
+
+def nudge_view(dyaw=0.0, dpitch=0.0, zoom=1.0):
+    cam = p.getDebugVisualizerCamera()
+    dist, yaw, pitch, target = cam[10], cam[8], cam[9], cam[11]
+    p.resetDebugVisualizerCamera(float(np.clip(dist * zoom, 0.4, 4.0)), yaw + dyaw,
+                                 float(np.clip(pitch + dpitch, -89, -5)), target)
 
 
 def add_cube(color, x, y, yaw=0.0, z=None):

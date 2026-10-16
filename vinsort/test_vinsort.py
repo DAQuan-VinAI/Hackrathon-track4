@@ -27,17 +27,32 @@ class FakeTracker:
 
 
 def test_pure_helpers():
-    assert teleop.GripHysteresis().update(0.3) is False          # between thresholds: no change
-    g = teleop.GripHysteresis()
-    assert g.update(0.2) and g.update(0.3) and not g.update(0.45)  # hysteresis
+    g = teleop.GripHysteresis(stable_frames=3)
+    assert not g.update(closed=True) and not g.update(closed=True) and g.update(closed=True)
+    assert g.update(opened=True) and g.update(opened=True) and not g.update(opened=True)
+    fist = [(0.0, 0.0)] * 21
+    for pip in (6, 10, 14, 18): fist[pip] = (0.0, 1.0)
+    closed, opened, count, fingers = teleop.finger_pose(fist)
+    assert closed and not opened and count == 0 and not any(fingers)
     np.testing.assert_allclose(teleop.rate_limit((0, 0, 0), (1, 0, 0)), (teleop.STEP_LIMIT, 0, 0))
-    lo = teleop.map_hand((0.0, 0.0), 0.0)
-    hi = teleop.map_hand((1.0, 1.0), 1.0)
-    assert lo[1] == WORKSPACE["y"][1] and hi[1] == WORKSPACE["y"][0]   # screen right -> -y
-    assert lo[0] == WORKSPACE["x"][1] and lo[2] == WORKSPACE["z"][1]   # screen top -> far; small hand -> high
-    c0, c1 = teleop.map_hand((0.5, 0.5), 0.21), teleop.map_hand((0.55, 0.5), 0.21)
-    span = WORKSPACE["y"][1] - WORKSPACE["y"][0]
-    assert abs(abs(c1[1] - c0[1]) - 0.05 * teleop.GAIN * span) < 1e-9  # hand move x GAIN
+    # joystick: center = stop; right = world -y (home view); up = world +x; quadratic, capped
+    assert not np.any(teleop.joystick((0.5 + teleop.DEAD * 0.9, 0.5)))
+    vr = teleop.joystick((0.9, 0.5))
+    assert vr[1] < 0 and abs(vr[0]) < 1e-12
+    assert teleop.joystick((0.5, 0.1))[0] > 0
+    assert abs(np.linalg.norm(teleop.joystick((1.0, 0.5))) - teleop.V_MAX) < 1e-12
+    assert np.linalg.norm(teleop.joystick((0.7, 0.5))) < np.linalg.norm(vr)
+    # home view (yaw -90, behind robot): hand right -> world -y, hand up -> world +x (far)
+    c = teleop.map_hand((0.5, 0.5), 0.2, -90)
+    r = teleop.map_hand((0.6, 0.5), 0.2, -90)
+    u = teleop.map_hand((0.5, 0.4), 0.2, -90)
+    assert r[1] < c[1] and abs(r[0] - c[0]) < 1e-9
+    assert u[0] > c[0] and abs(u[1] - c[1]) < 1e-9
+    # free POV: camera yaw 0 -> screen right is world +x
+    r0 = teleop.map_hand((0.6, 0.5), 0.2, 0)
+    assert r0[0] > c[0] and abs(r0[1] - c[1]) < 1e-9
+    # gain: 5% hand move -> 5% * GAIN * 2 * REACH
+    assert abs((c[1] - r[1]) - 0.1 * teleop.GAIN * 2 * teleop.REACH) < 1e-9 or r[1] == WORKSPACE["y"][0]
     W, H = 640, 480
     view, proj = perception.matrices()
     c = perception.pixel_to_world(W / 2 - 0.5, H / 2 - 0.5, 0.5, view, proj, W, H)

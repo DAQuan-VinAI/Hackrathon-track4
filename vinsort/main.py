@@ -3,7 +3,9 @@
 Keys (OpenCV HUD window OR PyBullet window):
   a AUTO (home, rescan) | t TELEOP | r rescan | n add a random part | q quit
   TELEOP keyboard fallback: i/k j/l u/o move, space grip
-Judges: drag a part with the LEFT mouse button in the PyBullet window (Ctrl+drag rotates the camera).
+  Free POV: 1/2 rotate left/right | 3/4 tilt | 5/6 zoom in/out | 0 reset view
+  Mouse (PyBullet): Ctrl+left drag rotate, middle drag pan, wheel zoom, left drag = move a part.
+Teleop controls follow the current camera yaw: hand right is always screen right.
 """
 import argparse
 import random
@@ -78,6 +80,14 @@ class Orchestrator:
             self.log.append("DONE")
 
     def handle_key(self, key):
+        views = {ord("1"): (-15, 0, 1), ord("2"): (15, 0, 1), ord("3"): (0, 5, 1),
+                 ord("4"): (0, -5, 1), ord("5"): (0, 0, 0.85), ord("6"): (0, 0, 1.18)}
+        if self.show and key in views:
+            scene.nudge_view(*views[key])
+            return
+        if self.show and key == ord("0"):
+            scene.reset_view()
+            return
         if key == ord("a"):
             self.set_mode("AUTO")
         elif key == ord("t"):
@@ -134,6 +144,9 @@ class Orchestrator:
         line1 = f"MODE {self.mode} | sorted {self.sorted} | in-bin {self.in_correct_bin()}/{len(self.ids)}"
         if self.mode == "TELEOP":
             line1 += f" | hand {'OK' if hand else 'LOST-HOLD'}" + (f" | {lat:.0f} ms" if lat else "")
+            tgt = self.tstate.get("target")
+            if tgt is not None:
+                line1 += f" | z {tgt[2]:.2f}"
         cv2.putText(bar, line1, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.putText(bar, self.msg, (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.imshow("VinSort HUD", np.vstack([bar, img]))
