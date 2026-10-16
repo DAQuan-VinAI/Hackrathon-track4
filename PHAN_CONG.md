@@ -114,15 +114,15 @@ TELEOP:
 
 ## 3. Tổng quan phân vai
 
-Thành viên: **Đoàn Anh Quân, Hoàng Đức Dũng, Trần Thị Lan, Đặng Thái Anh**. Điền tên vào cột "Người" lúc 0:00.
+Thành viên: **Đoàn Anh Quân, Hoàng Đức Dũng, Trần Thị Lan, Đặng Thái Anh**.
 Gợi ý chọn: **A** là người quen PyBullet và git nhất, máy demo nên là máy của A. **B** mạnh OpenCV và hình học camera. **C** có webcam ổn định, chịu thử nhiều. **D** cẩn thận với số liệu, nói tốt.
 
 | Vai | Người | File phụ trách | Trụ cột chính | Đầu ra cuối cùng | Phần nói khi demo |
 |---|---|---|---|---|---|
-| **A: Sim & Điều khiển** (trưởng nhóm, người ghép code) | `________` | `common.py`, `scene.py`, `controller.py`, `main.py` | Hình học (IK), Biểu diễn (FSM) | Demo chạy 3 lần liên tiếp không lỗi | Demo AUTO |
-| **B: Perception** | `________` | `perception.py` | Hình học, Bất định | `detect()` sai số XY < 5 mm (mục tiêu), cờ `suspicious` bắt được ca lỗi | Giải thích khung camera, sai số |
-| **C: Teleop & Tương tác** | `________` | `teleop.py` | Thời gian, Bất định | Điều khiển gắp 1 vật bằng tay, fail-safe, phương án bàn phím | Demo ca lỗi → TELEOP, mời giám khảo thử |
-| **D: Bằng chứng & Thuyết trình** | `________` | `benchmark.py`, slide, video, `REPORT.md` | Bằng chứng | CSV + bảng số + 1 biểu đồ, slide 6 trang, video trên máy và USB | Mở đầu, số đo, ca lỗi, impact |
+| **A: Sim & Điều khiển** (trưởng nhóm, người ghép code) | **Đoàn Anh Quân** | `common.py`, `scene.py`, `controller.py`, `main.py` | Hình học (IK), Biểu diễn (FSM) | Demo chạy 3 lần liên tiếp không lỗi | Demo AUTO |
+| **B: Perception** | **Hoàng Đức Dũng** | `perception.py` | Hình học, Bất định | `detect()` sai số XY < 5 mm (mục tiêu), cờ `suspicious` bắt được ca lỗi | Giải thích khung camera, sai số |
+| **C: Teleop & Tương tác** | **Đặng Thái Anh** | `teleop.py` | Thời gian, Bất định | Điều khiển gắp 1 vật bằng tay, fail-safe, phương án bàn phím | Demo ca lỗi → TELEOP, mời giám khảo thử |
+| **D: Bằng chứng & Thuyết trình** | **Trần Thị Lan** | `benchmark.py`, slide, video, `REPORT.md` | Bằng chứng | CSV + bảng số + 1 biểu đồ, slide 6 trang, video trên máy và USB | Mở đầu, số đo, ca lỗi, impact |
 
 ---
 
