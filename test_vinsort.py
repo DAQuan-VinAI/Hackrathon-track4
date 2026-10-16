@@ -92,6 +92,21 @@ def test_auto_e2e_and_hybrid_handoff():
     assert o.in_correct_bin() == 4 and o.sorted == 4          # 4 normal parts sorted, 2 touching left
 
 
+def test_teleop_assisted_grasp_radius():
+    s = build_scene(0, gui=False)
+    robot, ids = s["robot"], [o["id"] for o in s["objects"]]
+    x, y, z = p.getBasePositionAndOrientation(ids[0])[0]
+    # EE center 6 cm from cube center: AUTO 4 cm fails; TELEOP 8 cm grabs.
+    controller.servo_ee(robot, (x + 0.06, y, z + 0.01), n_steps=240)
+    assert np.linalg.norm(np.subtract(controller.ee_pos(robot), (x, y, z))) < 0.08
+    assert controller.grasp(robot, [ids[0]]) is None
+    state = {"target": np.array(controller.ee_pos(robot)), "cid": None, "grip": False}
+    tracker = FakeTracker([(controller.ee_pos(robot), True)])
+    state = teleop.teleop_step(robot, tracker, [ids[0]], state)
+    assert state["cid"] is not None, "teleop 8 cm assisted grab must attach"
+    controller.release(state["cid"])
+
+
 def test_teleop_reaches_bin():
     s = build_scene(0, gui=False)
     robot = s["robot"]

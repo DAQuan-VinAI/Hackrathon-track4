@@ -310,7 +310,7 @@ def teleop_step(robot, tracker, object_ids, state, key=-1, realtime=False):
     state["target"] = rate_limit(state["target"], goal)
     servo_ee(robot, state["target"], realtime=realtime)
     if grip and not state["grip"]:
-        state["cid"] = grasp(robot, object_ids)
+        state["cid"] = grasp(robot, object_ids, radius=0.08)  # ponytail: 8 cm teleop assist; AUTO stays 4 cm
     elif not grip and state["grip"]:
         release(state["cid"])
         state["cid"] = None
