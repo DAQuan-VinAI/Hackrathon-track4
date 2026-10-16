@@ -3,6 +3,7 @@
     python main.py --seed 0           # normal layout
     python main.py --seed 100         # failure case: two same-color cubes touching
     python main.py --keyboard         # force keyboard teleop (no webcam)
+    python main.py --conveyor --auto  # parts arrive on a belt, every 5th is a touching pair
 
 Keys (focus the HUD or the PyBullet window): a AUTO · t TELEOP · r rescan · n add cube · q quit
 Keyboard teleop: i/k forward/back · j/l left/right · u/o up/down · space grip
@@ -78,7 +79,13 @@ def load_teleop(force_keyboard):
 class App:
     def __init__(self, args):
         self.args = args
-        self.scene = build_scene(args.seed, args.n, gui=True)
+        self.conv = None
+        if getattr(args, "conveyor", False):  # parts arrive on a belt instead of a fixed layout
+            from conveyor import Conveyor
+            self.scene = build_scene(args.seed, 0, gui=True)
+            self.conv = Conveyor(self.scene, args.seed)
+        else:
+            self.scene = build_scene(args.seed, args.n, gui=True)
         self.robot = self.scene["robot"]
         self.mode = "IDLE"            # IDLE | AUTO | DONE | TELEOP
         self.alert = ""               # red banner text, set when the robot hands over to the operator
@@ -285,8 +292,12 @@ class App:
         realtime = not self.args.fast
         go_home(self.robot, realtime=realtime, on_step=self.pump)
         self.refresh_camera()
-        ok = [d for d in self.dets if not d.suspicious]
-        unsure = [d for d in self.dets if d.suspicious]
+        dets = self.dets
+        if self.conv:                         # parts still entering the view (cut by the image edge) wait
+            from conveyor import PICK_ZONE_Y
+            dets = [d for d in dets if d.xyz[1] < PICK_ZONE_Y]
+        ok = [d for d in dets if not d.suspicious]
+        unsure = [d for d in dets if d.suspicious]
         if ok:
             det = min(ok, key=lambda d: np.hypot(d.xyz[0], d.xyz[1]))   # nearest to the robot base
             self.msg = f"picking {det.color} at ({det.xyz[0]:.3f}, {det.xyz[1]:.3f})"
@@ -305,9 +316,21 @@ class App:
                     self.enter_teleop("CAN NGUOI VAN HANH: grasp failed")
         elif unsure:
             self.enter_teleop(f"CAN NGUOI VAN HANH: {unsure[0].reason} ({len(unsure)} uncertain)")
+        elif self.conv:                       # nothing left under the camera: start the belt again
+            self.msg = "belt running"
         else:
             self.mode, self.msg = "DONE", "XONG - r rescan, n add cube"
             self.log("all confident parts sorted", MUTED)
+
+    def belt_frame(self):
+        """One frame of the conveyor (AUTO, nothing waiting under the camera)."""
+        n_before = len(self.scene["objects"])
+        new = self.conv.run(STEPS_PER_FRAME, SIM_HZ)
+        if new:
+            c = self.scene["objects"][-1]["color"]
+            pair = len(self.scene["objects"]) - n_before > 1
+            self.log(f"belt: new {'PAIR ' if pair else ''}{c} part", DRAW[c])
+        self.msg = "belt running" if self.conv.running else "part arrived, scanning"
 
     def handle_key(self, k):
         if k == ord("q"):
@@ -318,6 +341,8 @@ class App:
             self.enter_auto("rescan")
         elif k == ord("t") and self.mode != "TELEOP":
             self.enter_teleop()
+        elif k == ord("n") and self.conv:
+            self.msg = "part added on the belt" if self.conv.spawn() else "belt start is busy"
         elif k == ord("n"):
             oid = add_random_object(self.scene)
             self.msg = "added a cube" if oid is not None else "no free spot"
@@ -336,11 +361,14 @@ class App:
             if self.quit:
                 break
 
-            if self.mode == "AUTO":
+            belt = self.mode == "AUTO" and self.conv is not None and not self.conv.waiting()
+            if self.mode == "AUTO" and not belt:
                 self.auto_tick()
                 next_t = time.perf_counter()
             else:
-                if self.mode == "TELEOP":
+                if belt:
+                    self.belt_frame()
+                elif self.mode == "TELEOP":
                     self.tstate["key"] = k
                     self.tstate = self.teleop_step(self.robot, self.tracker, self.object_ids, self.tstate)
                     self.trail()
@@ -371,6 +399,7 @@ def main():
     ap.add_argument("--keyboard", action="store_true", help="keyboard teleop instead of the webcam")
     ap.add_argument("--fast", action="store_true", help="no real-time pacing in AUTO (debug)")
     ap.add_argument("--auto", action="store_true", help="start in AUTO instead of IDLE")
+    ap.add_argument("--conveyor", action="store_true", help="parts arrive on a belt (see conveyor.py)")
     args = ap.parse_args()
 
     app = App(args)
