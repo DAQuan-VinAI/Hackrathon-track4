@@ -142,10 +142,10 @@ class App:
         cv2.putText(hud, "a AUTO  t TELEOP  r rescan  n add  q quit", (10, hud.shape[0] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
-        side = self.tstate.get("side") if self.mode == "TELEOP" else None
-        if side is not None:                  # C's side view (height above the table), right of the top view
+        views = self.tstate.get("views") if self.mode == "TELEOP" else None
+        if views is not None:                 # C's 2x2 views (top, side, front, 3D), right of the camera view
             s = hud.shape[0]
-            hud = np.hstack([hud, cv2.resize(side, (int(s * side.shape[1] / side.shape[0]), s))])
+            hud = np.hstack([hud, cv2.resize(views, (int(s * views.shape[1] / views.shape[0]), s))])
         cv2.imshow(WINDOW, hud)
 
     def pump(self):

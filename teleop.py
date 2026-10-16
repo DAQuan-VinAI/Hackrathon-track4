@@ -37,10 +37,16 @@ GRASP_DZ = 0.008        # stop this far above the top face (same as controller.p
 CARRY_Z = 0.15          # lift to this height after an assisted grab
 ASSIST_FRAMES = 120     # give up an assisted grab after ~4 s
 
-# Side view for the HUD (GUI only): camera on the +y side, so height above the table is visible.
-# Image right == world -x (toward the robot base).
-SIDE = dict(eye=(0.55, 1.05, 0.20), target=(0.55, 0.0, 0.18), up=(0, 0, 1), fov=32, W=400, H=400)
-SIDE_EVERY = 2          # render every N teleop frames (hardware OpenGL, a few ms)
+# Four views for the HUD (GUI only), a 2x2 grid in state["views"]. One view is re-rendered per
+# teleop frame (round robin), so each refreshes at ~7 Hz and a frame costs one small render.
+VIEWS = [
+    ("TOP (screen right = robot's right)", dict(eye=(0.55, 0.0, 0.95), target=(0.55, 0.0, 0.0), up=(1, 0, 0), fov=36)),
+    ("SIDE (robot on the right)", dict(eye=(0.55, 1.05, 0.20), target=(0.55, 0.0, 0.18), up=(0, 0, 1), fov=32)),
+    ("FRONT (facing the robot)", dict(eye=(1.30, 0.0, 0.22), target=(0.50, 0.0, 0.15), up=(0, 0, 1), fov=40)),
+    ("3D", dict(eye=(1.15, 0.75, 0.65), target=(0.50, -0.05, 0.05), up=(0, 0, 1), fov=45)),
+]
+VIEW_PX = 300           # each tile is VIEW_PX x VIEW_PX
+FOOTER = 44             # status bar under the grid: height and hint
 
 
 def clamp_ws(xyz):
@@ -340,9 +346,34 @@ def _project(pt, view, proj, W, H):
     return int((ndc[0] + 1) / 2 * W), int((1 - ndc[1]) / 2 * H)
 
 
+def _render_view(cv2, idx, ee, near, holding, bgr):
+    """One tile: render view `idx`, draw the EE, its drop line to the floor and the nearest cube."""
+    title, cam = VIEWS[idx]
+    n = VIEW_PX
+    view = p.computeViewMatrix(cam["eye"], cam["target"], cam["up"])
+    proj = p.computeProjectionMatrixFOV(cam["fov"], 1.0, 0.1, 3.0)
+    _, _, rgba, _, _ = p.getCameraImage(n, n, view, proj, renderer=p.ER_BULLET_HARDWARE_OPENGL,
+                                        flags=p.ER_NO_SEGMENTATION_MASK)
+    img = cv2.cvtColor(np.reshape(rgba, (n, n, 4))[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR)
+    top, floor = _project(ee, view, proj, n, n), _project((ee[0], ee[1], 0.0), view, proj, n, n)
+    if idx == 0:                                          # top view: grab radius around the EE on the floor
+        ring = [_project((ee[0] + ASSIST_XY * np.cos(a), ee[1] + ASSIST_XY * np.sin(a), 0.0), view, proj, n, n)
+                for a in np.linspace(0, 2 * np.pi, 33)]
+        cv2.polylines(img, [np.array(ring, np.int32)], True, bgr, 2)
+    cv2.line(img, top, floor, bgr, 2)
+    cv2.circle(img, top, 6, bgr, 2)
+    cv2.circle(img, floor, 3, bgr, -1)
+    if near is not None and not holding:
+        cv2.circle(img, _project(near[2], view, proj, n, n), 12, (0, 220, 255), 2)
+    cv2.rectangle(img, (0, 0), (n, 22), (255, 255, 255), -1)
+    cv2.putText(img, title, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (40, 40, 40), 1, cv2.LINE_AA)
+    cv2.rectangle(img, (0, 0), (n - 1, n - 1), (90, 90, 90), 1)
+    return img
+
+
 def _draw_aids(robot, state, near):
     """Drop line from the EE to the floor in the PyBullet window (green = a cube can be grabbed)
-    and a side view in state["side"] (BGR) for the HUD. No-op in DIRECT mode (tests, benchmark)."""
+    and four views as a 2x2 grid in state["views"] (BGR) for the HUD. No-op in DIRECT mode."""
     if not _gui():
         return
     import cv2
@@ -351,6 +382,7 @@ def _draw_aids(robot, state, near):
     holding = state.get("cid") is not None
     ok = holding or (near is not None and near[0] < ASSIST_XY)
     rgb = (0.1, 0.8, 0.1) if ok else (0.9, 0.1, 0.1)
+    bgr = tuple(int(255 * c) for c in rgb[::-1])
 
     now = time.perf_counter()                             # lifeTime clears the line once TELEOP ends
     kw = dict(lineColorRGB=rgb, lineWidth=3, lifeTime=0.5)
@@ -358,33 +390,25 @@ def _draw_aids(robot, state, near):
         kw["replaceItemUniqueId"] = _LINE["id"]
     _LINE["id"], _LINE["t"] = p.addUserDebugLine(ee, (ee[0], ee[1], 0.0), **kw), now
 
-    state["side_i"] = state.get("side_i", -1) + 1
-    if state["side_i"] % SIDE_EVERY:
-        return
-    W, H = SIDE["W"], SIDE["H"]
-    view = p.computeViewMatrix(SIDE["eye"], SIDE["target"], SIDE["up"])
-    proj = p.computeProjectionMatrixFOV(SIDE["fov"], W / H, 0.1, 3.0)
-    _, _, rgba, _, _ = p.getCameraImage(W, H, view, proj, renderer=p.ER_BULLET_HARDWARE_OPENGL,
-                                        flags=p.ER_NO_SEGMENTATION_MASK)
-    img = cv2.cvtColor(np.reshape(rgba, (H, W, 4))[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR)
-    bgr = tuple(int(255 * c) for c in rgb[::-1])
-    top, floor = _project(ee, view, proj, W, H), _project((ee[0], ee[1], 0.0), view, proj, W, H)
-    cv2.line(img, top, floor, bgr, 2)
-    cv2.circle(img, top, 6, bgr, 2)
-    if near is not None and not holding:
-        cv2.circle(img, _project(near[2], view, proj, W, H), 14, (0, 255, 255), 2)
-    cv2.putText(img, "SIDE VIEW (robot on the right)", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (40, 40, 40), 1)
-    cv2.putText(img, f"z = {ee[2]:.2f} m", (8, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (40, 40, 40), 2)
+    tiles = state.setdefault("tiles", [None] * len(VIEWS))
+    i = state["view_i"] = (state.get("view_i", -1) + 1) % len(VIEWS)
+    tiles[i] = _render_view(cv2, i, ee, near, holding, bgr)
+    blank = np.full((VIEW_PX, VIEW_PX, 3), 60, np.uint8)
+    t = [x if x is not None else blank for x in tiles]
+    grid = np.vstack([np.hstack(t[0:2]), np.hstack(t[2:4])])
+
     if holding:
         hint = "HOLDING - open palm to release"
     elif state.get("assist") is not None:
         hint = "AUTO-GRAB..."
     elif near is not None:
-        hint = f"cube {near[0] * 100:.0f} cm away" + (" - FIST to grab" if ok else "")
+        hint = f"cube {near[0] * 100:.0f} cm away" + (" - FIST to grab" if ok else f" - get < {ASSIST_XY * 100:.0f} cm")
     else:
         hint = "no cube in the workspace"
-    cv2.putText(img, hint, (8, H - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.55, bgr, 2)
-    state["side"] = img
+    bar = np.full((FOOTER, grid.shape[1], 3), 30, np.uint8)
+    cv2.putText(bar, f"z = {ee[2]:.2f} m", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (230, 230, 230), 2, cv2.LINE_AA)
+    cv2.putText(bar, hint, (170, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, bgr, 2, cv2.LINE_AA)
+    state["views"] = np.vstack([grid, bar])
 
 
 if __name__ == "__main__":
