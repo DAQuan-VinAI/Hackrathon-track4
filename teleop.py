@@ -30,7 +30,9 @@ CENTER = ((WORKSPACE["x"][0] + WORKSPACE["x"][1]) / 2, (WORKSPACE["y"][0] + WORK
 
 # Assisted grab (PHAN_CONG 6C "Nếu trễ thì cắt": grab gesture -> the arm descends, grabs, lifts).
 # grasp() needs the EE within 4 cm of the cube center, which is hard to hit by hand from one view.
-ASSIST_XY = 0.06        # grab gesture with a loose cube this close in XY: the arm finishes the grab
+ASSIST_XY = 0.08        # grab gesture with a loose cube this close in XY: the arm finishes the grab.
+                        # = the minimum cube spacing; from behind the robot a 6-8 cm depth offset
+                        # still looks "right above the cube", so 6 cm missed too often
 GRASP_DZ = 0.008        # stop this far above the top face (same as controller.pick_and_place)
 CARRY_Z = 0.15          # lift to this height after an assisted grab
 ASSIST_FRAMES = 120     # give up an assisted grab after ~4 s
@@ -256,7 +258,7 @@ def teleop_step(robot, tracker, object_ids, state):
             elif near is not None and near[0] < ASSIST_XY:
                 state["assist"] = {"id": near[1], "frames": 0, "phase": "align"}
                 state["msg"] = "auto-grab"
-            elif not state["grip"]:
+            else:                                         # every frame, so the distance updates as the hand moves
                 dist = "no cube" if near is None else f"nearest cube {near[0] * 100:.0f} cm"
                 state["msg"] = f"move closer ({dist}, need < {ASSIST_XY * 100:.0f} cm)"
         elif not grip and state["grip"]:
@@ -265,6 +267,10 @@ def teleop_step(robot, tracker, object_ids, state):
         state["grip"] = grip
     state["latency_ms"] = (time.perf_counter() - tracker.t0) * 1000
     _draw_aids(robot, state, near)
+    if frame is not None and state.get("msg"):            # status where the operator is looking
+        import cv2
+        cv2.putText(frame, state["msg"], (10, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
+        cv2.putText(frame, state["msg"], (10, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     return state
 
 
