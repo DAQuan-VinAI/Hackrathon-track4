@@ -18,6 +18,7 @@ MIN_SPACING = 0.08
 EDGE_MARGIN = 0.03                    # keep cubes away from the WORKSPACE border
 PANDA_REST = [0.0, -0.4, 0.0, -2.4, 0.0, 2.0, 0.785]   # nominal arm pose, joints 0..6
 FINGER_JOINTS = [9, 10]
+VIEW_YAW = -90                        # GUI camera behind the robot: screen right == world -y
 
 CURRENT = {}                          # last scene built in this process (used by the oracle stub)
 
@@ -34,8 +35,16 @@ def _connect(gui):
         p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 0)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         # look from behind the robot so screen left/right matches the operator's hand
-        p.resetDebugVisualizerCamera(cameraDistance=0.95, cameraYaw=-90, cameraPitch=-55,
+        p.resetDebugVisualizerCamera(cameraDistance=0.95, cameraYaw=VIEW_YAW, cameraPitch=-55,
                                      cameraTargetPosition=[0.5, -0.1, 0.0])
+
+
+def camera_yaw():
+    """Current GUI camera yaw (deg), so teleop stays screen-relative after the view is rotated.
+    DIRECT mode reports 0 for every camera field: use the default view instead."""
+    if p.getConnectionInfo().get("connectionMethod") != p.GUI:
+        return VIEW_YAW
+    return float(p.getDebugVisualizerCamera()[8])
 
 
 def _make_ground():
