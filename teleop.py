@@ -87,17 +87,11 @@ class GripHysteresis:
         self.candidate = None
         self.frames = 0
         self.stable_frames = stable_frames
-        self.locked = False
 
-    def update(self, closed=None, opened=None, ratio=None):
-        # Pinch kept as fallback; fist/open-palm is easier and preferred.
-        wanted = True if closed else False if opened else (
-            True if ratio is not None and ratio < GRIP_ON else
-            False if ratio is not None and ratio > GRIP_OFF else None)
-        if self.locked:  # after Space: gestures ignored until the hand agrees with the forced state
-            if wanted == self.grip:
-                self.locked = False
-            return self.grip
+    def update(self, closed=None, opened=None):
+        """Latch: GRAB gesture locks grip ON, RELEASE gesture locks it OFF. Every other gesture,
+        no gesture, or a lost hand keeps the current state - only the opposite command changes it."""
+        wanted = True if closed else False if opened else None
         if wanted is None or wanted == self.grip:
             self.candidate, self.frames = None, 0
         elif wanted == self.candidate:
@@ -111,7 +105,7 @@ class GripHysteresis:
 
     def force(self, grip):
         """Manual override (Space key): applied at once, no confirmation frames."""
-        self.grip, self.candidate, self.frames, self.locked = grip, None, 0, True
+        self.grip, self.candidate, self.frames = grip, None, 0
 
 
 def finger_pose(lm):
@@ -204,7 +198,7 @@ class HandTracker:
         frozen = index_only or v_sign or self.grip.candidate is not None
         vel = np.zeros(2) if frozen else joystick(self.palm, self.yaw)
         self.pos = clamp_ws((*(self.pos[:2] + vel), self.z))
-        action = "UP" if index_only else "DOWN" if v_sign else "GRAB" if grip else "MOVE"
+        action = "UP" if index_only else "DOWN" if v_sign else "MOVE"
         self._overlay(frame, action, vel)
         return self.pos.copy(), grip, frame, (time.perf_counter() - self.t0) * 1000
 
@@ -239,6 +233,12 @@ class HandTracker:
             cv2.arrowedLine(frame, (w // 2, h // 2), (pu, pv), (0, 255, 255), 3, tipLength=0.2)
         color = {"UP": (255, 200, 0), "DOWN": (255, 0, 255), "GRAB": (0, 0, 255), "MOVE": (0, 255, 0)}[action]
         cv2.putText(frame, f"{action}  z={self.z:.2f}m", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+        # Latched grip state, always visible (independent of the current gesture)
+        lock = "KHOA: GAP" if self.grip.grip else "KHOA: THA"
+        lc = (0, 0, 255) if self.grip.grip else (0, 200, 0)
+        (tw, th), _ = cv2.getTextSize(lock, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+        cv2.rectangle(frame, (w - tw - 20, 8), (w - 6, 16 + th), lc, -1)
+        cv2.putText(frame, lock, (w - tw - 13, 12 + th), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
         if self.recognizer:
             cv2.putText(frame, f"AI: {self.gesture} {self.score:.0%}", (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)

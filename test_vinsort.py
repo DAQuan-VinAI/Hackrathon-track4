@@ -30,10 +30,16 @@ def test_pure_helpers():
     g = teleop.GripHysteresis(stable_frames=3)
     assert not g.update(closed=True) and not g.update(closed=True) and g.update(closed=True)
     assert g.update(opened=True) and g.update(opened=True) and not g.update(opened=True)
-    g.force(True)                                                 # Space grabs while palm is open
-    assert all(g.update(opened=True) for _ in range(10))          # open palm must NOT release it
-    g.update(closed=True)                                         # hand agrees -> gestures active again
-    assert g.update(opened=True) and g.update(opened=True) and not g.update(opened=True)
+    # latch: after GRAB, nothing but RELEASE frees it (no gesture / other gestures / lost hand keep it)
+    for _ in range(3): g.update(closed=True)
+    assert all(g.update() for _ in range(20))
+    for _ in range(3): g.update(opened=True)
+    assert not any(g.update() for _ in range(20))
+    g.update(opened=True); g.update(closed=True); g.update(opened=True)  # flicker never confirms
+    assert not g.update(closed=True)
+    g.force(True)                                                 # Space = instant GRAB, latched
+    assert all(g.update() for _ in range(10))
+    assert g.update(opened=True) and g.update(opened=True) and not g.update(opened=True)  # V releases
     fist = [(0.0, 0.0)] * 21
     for pip in (6, 10, 14, 18): fist[pip] = (0.0, 1.0)
     closed, opened, count, fingers = teleop.finger_pose(fist)
