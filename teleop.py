@@ -15,7 +15,7 @@ import time
 import numpy as np
 import pybullet as p
 
-from common import CUBE, WORKSPACE
+from common import BIN_SIZE, BINS, CUBE, WORKSPACE
 
 STEP_LIMIT = 0.015      # max EE target change per frame (m): no jump when entering TELEOP
 EMA = 0.3               # weight of the new palm sample: smoother but adds lag
@@ -37,12 +37,18 @@ GRASP_DZ = 0.008        # stop this far above the top face (same as controller.p
 CARRY_Z = 0.15          # lift to this height after an assisted grab
 ASSIST_FRAMES = 120     # give up an assisted grab after ~4 s
 
+# Corridor over the bins (outside WORKSPACE): x along the bin row, EE at least 14 cm high
+# (held cube bottom ~5 cm below the EE + 8 cm walls).
+BIN_ZONE = dict(x=(min(b[0] for b in BINS.values()) - 0.07, max(b[0] for b in BINS.values()) + 0.07),
+                y=(min(b[1] for b in BINS.values()) - 0.05, WORKSPACE["y"][0]), z_min=0.14)
+
 # Four views for the HUD (GUI only), a 2x2 grid in state["views"]. One view is re-rendered per
 # teleop frame (round robin), so each refreshes at ~7 Hz and a frame costs one small render.
 VIEWS = [
-    ("TOP (screen right = robot's right)", dict(eye=(0.55, 0.0, 0.95), target=(0.55, 0.0, 0.0), up=(1, 0, 0), fov=36)),
+    # top and front are widened to y = -0.6 so the bins are in view too
+    ("TOP (screen right = robot's right)", dict(eye=(0.50, -0.17, 1.15), target=(0.50, -0.17, 0.0), up=(1, 0, 0), fov=45)),
     ("SIDE (robot on the right)", dict(eye=(0.55, 1.05, 0.20), target=(0.55, 0.0, 0.18), up=(0, 0, 1), fov=32)),
-    ("FRONT (facing the robot)", dict(eye=(1.30, 0.0, 0.22), target=(0.50, 0.0, 0.15), up=(0, 0, 1), fov=40)),
+    ("FRONT (facing the robot)", dict(eye=(1.40, -0.17, 0.30), target=(0.45, -0.17, 0.10), up=(0, 0, 1), fov=48)),
     ("3D", dict(eye=(1.15, 0.75, 0.65), target=(0.50, -0.05, 0.05), up=(0, 0, 1), fov=45)),
 ]
 VIEW_PX = 300           # each tile is VIEW_PX x VIEW_PX
@@ -50,8 +56,22 @@ FOOTER = 44             # status bar under the grid: height and hint
 
 
 def clamp_ws(xyz):
-    return np.array([np.clip(xyz[0], *WORKSPACE["x"]), np.clip(xyz[1], *WORKSPACE["y"]),
-                     np.clip(xyz[2], *WORKSPACE["z"])])
+    """Teleop safe region: WORKSPACE, plus a corridor over the bin row so the operator can drop a
+    part in its bin (PHAN_CONG 6C). Over the bins the EE stays high enough for a held cube to clear
+    the 8 cm walls."""
+    x, y, z = xyz
+    y = np.clip(y, BIN_ZONE["y"][0], WORKSPACE["y"][1])
+    if y < WORKSPACE["y"][0]:
+        return np.array([np.clip(x, *BIN_ZONE["x"]), y, np.clip(z, BIN_ZONE["z_min"], WORKSPACE["z"][1])])
+    return np.array([np.clip(x, *WORKSPACE["x"]), y, np.clip(z, *WORKSPACE["z"])])
+
+
+def bin_under(xyz):
+    """Color of the bin right below xyz, or None."""
+    for color, (bx, by) in BINS.items():
+        if abs(xyz[0] - bx) < BIN_SIZE / 2 and abs(xyz[1] - by) < BIN_SIZE / 2:
+            return color
+    return None
 
 
 def screen_axes(yaw_deg):
@@ -397,8 +417,11 @@ def _draw_aids(robot, state, near):
     t = [x if x is not None else blank for x in tiles]
     grid = np.vstack([np.hstack(t[0:2]), np.hstack(t[2:4])])
 
-    if holding:
-        hint = "HOLDING - open palm to release"
+    over = bin_under(ee)
+    if holding and over:
+        hint = f"over {over.upper()} bin - open palm to drop"
+    elif holding:
+        hint = "HOLDING - move to its bin (right of the table)"
     elif state.get("assist") is not None:
         hint = "AUTO-GRAB..."
     elif near is not None:
