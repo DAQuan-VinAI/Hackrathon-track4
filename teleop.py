@@ -53,7 +53,7 @@ VIEWS = [
     # top and front are widened to y = -0.6 so the bins are in view too
     ("TOP (right = robot right)", dict(eye=(0.50, -0.17, 1.15), target=(0.50, -0.17, 0.0), up=(1, 0, 0), fov=45)),
     ("SIDE (robot on right)", dict(eye=(0.55, 1.05, 0.20), target=(0.55, 0.0, 0.18), up=(0, 0, 1), fov=32)),
-    ("FRONT (facing robot)", dict(eye=(1.40, -0.17, 0.30), target=(0.45, -0.17, 0.10), up=(0, 0, 1), fov=48)),
+    ("GRIPPER CAM (looking down)", "gripper"),          # eye-in-hand: follows the EE, see _render_view
     ("3D", dict(eye=(1.15, 0.75, 0.65), target=(0.50, -0.05, 0.05), up=(0, 0, 1), fov=45)),
 ]
 VIEW_PX = 240           # each tile is VIEW_PX x VIEW_PX (main.py scales the grid to the HUD height)
@@ -397,19 +397,32 @@ def _render_view(cv2, idx, ee, near, holding, bgr):
     """One tile: render view `idx`, draw the EE, its drop line to the floor and the nearest cube."""
     title, cam = VIEWS[idx]
     n = VIEW_PX
+    gripper = cam == "gripper"
+    if gripper:   # camera at the suction point looking straight down; image up = away from the robot (+x)
+        cam = dict(eye=(ee[0], ee[1], ee[2] - 0.003), target=(ee[0], ee[1], 0.0), up=(1, 0, 0), fov=70)
     view = p.computeViewMatrix(cam["eye"], cam["target"], cam["up"])
-    proj = p.computeProjectionMatrixFOV(cam["fov"], 1.0, 0.1, 3.0)
+    proj = p.computeProjectionMatrixFOV(cam["fov"], 1.0, 0.01 if gripper else 0.1, 3.0)
     _, _, rgba, _, _ = p.getCameraImage(n, n, view, proj, renderer=p.ER_BULLET_HARDWARE_OPENGL,
                                         flags=p.ER_NO_SEGMENTATION_MASK)
     img = cv2.cvtColor(np.reshape(rgba, (n, n, 4))[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR)
-    top, floor = _project(ee, view, proj, n, n), _project((ee[0], ee[1], 0.0), view, proj, n, n)
-    if idx == 0:                                          # top view: grab radius around the EE on the floor
+    if idx == 0 or gripper:                               # grab radius around the EE on the floor
         ring = [_project((ee[0] + ASSIST_XY * np.cos(a), ee[1] + ASSIST_XY * np.sin(a), 0.0), view, proj, n, n)
                 for a in np.linspace(0, 2 * np.pi, 33)]
         cv2.polylines(img, [np.array(ring, np.int32)], True, bgr, 2)
-    cv2.line(img, top, floor, bgr, 2)
-    cv2.circle(img, top, 6, bgr, 2)
-    cv2.circle(img, floor, 3, bgr, -1)
+    if gripper:                                           # crosshair = where the suction cup comes down
+        c, r = n // 2, 14
+        cv2.line(img, (c - 2 * r, c), (c - r // 2, c), bgr, 2)
+        cv2.line(img, (c + r // 2, c), (c + 2 * r, c), bgr, 2)
+        cv2.line(img, (c, c - 2 * r), (c, c - r // 2), bgr, 2)
+        cv2.line(img, (c, c + r // 2), (c, c + 2 * r), bgr, 2)
+        cv2.circle(img, (c, c), r, bgr, 1)
+        cv2.putText(img, f"{ee[2] * 100:.0f} cm above floor", (6, n - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (255, 255, 255), 1, cv2.LINE_AA)
+    else:
+        top, floor = _project(ee, view, proj, n, n), _project((ee[0], ee[1], 0.0), view, proj, n, n)
+        cv2.line(img, top, floor, bgr, 2)
+        cv2.circle(img, top, 6, bgr, 2)
+        cv2.circle(img, floor, 3, bgr, -1)
     if near is not None and not holding:
         cv2.circle(img, _project(near[2], view, proj, n, n), 12, (0, 220, 255), 2)
     cv2.rectangle(img, (0, 0), (n, 22), (255, 255, 255), -1)
