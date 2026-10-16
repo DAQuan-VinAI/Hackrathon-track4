@@ -1,9 +1,8 @@
 """Hand / keyboard teleoperation (owner: C).
 
-STUB: teleop_step() returns state unchanged. See the teleop contract in common.py.
+STUB until C pushes the real file: keyboard-only teleop from stubs.py, same signatures
+as the contract in common.py. C adds HandTracker (webcam + MediaPipe) and replaces the rest.
 """
+from stubs import KeyboardTracker, teleop_step  # noqa: F401
 
-
-def teleop_step(robot, tracker, object_ids, state):
-    """STUB: no-op. C replaces it with read hand -> servo_ee -> grasp / release."""
-    return state
+STUB = True

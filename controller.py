@@ -39,17 +39,47 @@ class _Pacer:
             self.t = time.perf_counter()
 
 
+REST_POSE = [0.0, -0.4, 0.0, -2.4, 0.0, 2.0, 0.785, 0.04, 0.04]   # 7 arm + 2 finger joints
+PRECISE_RADIUS = 0.03         # switch from null-space IK to plain IK this close to the target
+
+
+def _ik_limits(robot):
+    movable = [j for j in range(p.getNumJoints(robot)) if p.getJointInfo(robot, j)[2] != p.JOINT_FIXED]
+    lo = [p.getJointInfo(robot, j)[8] for j in movable]
+    hi = [p.getJointInfo(robot, j)[9] for j in movable]
+    return lo, hi, [h - l for l, h in zip(lo, hi)]
+
+
+_LIMITS = {}
+
+
 def ee_pos(robot):
     return np.array(p.getLinkState(robot, EE_LINK)[0])
 
 
-def solve_ik(robot, xyz, yaw=0.0):
-    # Plain damped least squares seeded from the current joint state. The null-space
-    # variant (restPoses + limits) was tested: 9-23 mm error at the workspace edge vs 0.5 mm here.
+def solve_ik(robot, xyz, yaw=0.0, precise=True):
+    """Damped least squares IK, seeded from the current joint state.
+
+    precise=False adds a null-space pull toward REST_POSE: keeps the arm in a sane
+    configuration on long moves but leaves 2-9 mm error. precise=True drops it: ~1 mm,
+    but used alone over many picks it drifted into poses that could not reach the blue bin.
+    """
     orn = p.getQuaternionFromEuler([np.pi, 0, yaw])            # gripper pointing down
-    q = p.calculateInverseKinematics(robot, EE_LINK, xyz, orn,
-                                     maxNumIterations=200, residualThreshold=1e-5)
+    if precise:
+        q = p.calculateInverseKinematics(robot, EE_LINK, xyz, orn,
+                                         maxNumIterations=200, residualThreshold=1e-5)
+    else:
+        if robot not in _LIMITS:
+            _LIMITS[robot] = _ik_limits(robot)
+        lo, hi, rng = _LIMITS[robot]
+        q = p.calculateInverseKinematics(robot, EE_LINK, xyz, orn, lowerLimits=lo, upperLimits=hi,
+                                         jointRanges=rng, restPoses=REST_POSE,
+                                         maxNumIterations=100, residualThreshold=1e-4)
     return q[:7]       # IK returns all movable joints (7 arm + 2 fingers); keep the arm only
+
+
+def _ik_toward(robot, xyz, yaw):
+    return solve_ik(robot, xyz, yaw, precise=np.linalg.norm(ee_pos(robot) - xyz) < PRECISE_RADIUS)
 
 
 def _set_arm_targets(robot, q):
@@ -63,7 +93,7 @@ def move_ee(robot, xyz, yaw=0.0, max_steps=480, tol=0.005, realtime=False, on_st
     pacer = _Pacer() if realtime else None
     for i in range(max_steps):
         if i % IK_REFRESH == 0:
-            _set_arm_targets(robot, solve_ik(robot, xyz, yaw))
+            _set_arm_targets(robot, _ik_toward(robot, xyz, yaw))
         p.stepSimulation()
         if pacer:
             pacer.tick()
@@ -76,7 +106,7 @@ def move_ee(robot, xyz, yaw=0.0, max_steps=480, tol=0.005, realtime=False, on_st
 
 def servo_ee(robot, xyz, n_steps=8, yaw=0.0):
     """Non-blocking: set the IK target and advance n_steps (call once per teleop frame)."""
-    _set_arm_targets(robot, solve_ik(robot, xyz, yaw))
+    _set_arm_targets(robot, _ik_toward(robot, xyz, yaw))
     for _ in range(n_steps):
         p.stepSimulation()
     return ee_pos(robot)

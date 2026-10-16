@@ -34,8 +34,18 @@ def _connect(gui):
         p.configureDebugVisualizer(p.COV_ENABLE_KEYBOARD_SHORTCUTS, 0)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         # look from behind the robot so screen left/right matches the operator's hand
-        p.resetDebugVisualizerCamera(cameraDistance=1.3, cameraYaw=-90, cameraPitch=-40,
-                                     cameraTargetPosition=[0.45, -0.1, 0.0])
+        p.resetDebugVisualizerCamera(cameraDistance=0.95, cameraYaw=-90, cameraPitch=-55,
+                                     cameraTargetPosition=[0.5, -0.1, 0.0])
+
+
+def _make_ground():
+    """Plain gray ground. plane.urdf has a blue checker texture that leaks into the blue HSV mask."""
+    col = p.createCollisionShape(p.GEOM_PLANE)
+    vis = p.createVisualShape(p.GEOM_BOX, halfExtents=[2, 2, 0.001], rgbaColor=[0.82, 0.82, 0.82, 1],
+                              visualFramePosition=[0, 0, -0.001])
+    ground = p.createMultiBody(0, col, vis, [0, 0, TABLE_Z])
+    p.changeDynamics(ground, -1, lateralFriction=1.0)
+    return ground
 
 
 def _load_robot():
@@ -51,7 +61,8 @@ def _load_robot():
 def _make_bin(color):
     """Low gray tray with a colored floor, centered on BINS[color]."""
     bx, by = BINS[color]
-    s, h, t = BIN_SIZE / 2, 0.04, 0.005               # inner half-width, wall height, thickness
+    s, h, t = BIN_SIZE / 2, 0.08, 0.005               # inner half-width, wall height, thickness
+    # 8 cm walls: with 4 cm walls a cube dropped from RELEASE_Z bounced off another cube and out
     w = s + t                                          # outer half-width
     parts = [([w, w, t / 2], [0, 0, t / 2]),           # (halfExtents, center): floor
              ([t / 2, w, h / 2], [s + t / 2, 0, h / 2]), ([t / 2, w, h / 2], [-s - t / 2, 0, h / 2]),
@@ -97,7 +108,7 @@ def build_scene(seed, n_objects=6, gui=True, settle_steps=SIM_HZ):
     Ground truth for D: p.getBasePositionAndOrientation(obj["id"]).
     """
     _connect(gui)
-    p.loadURDF("plane.urdf")
+    _make_ground()
     robot = _load_robot()
     bins = {c: _make_bin(c) for c in COLORS}
 
