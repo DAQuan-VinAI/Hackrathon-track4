@@ -172,7 +172,7 @@ Với camera trên (cao 1.0 m, FOV dọc 30°), khung hình phủ khoảng x ∈
 | `grasp(robot, object_ids) -> cid or None`, `release(cid)` | A | A, C | 0:45 |
 | `pick_and_place(robot, det: Detection, object_ids, realtime=False) -> bool` | A | main, D | 0:55 |
 | `HandTracker().read() -> (xyz or None, grip, frame_bgr, latency_ms)` | C | C, main | 1:15 |
-| `KeyboardTracker().read()` cùng chữ ký, phương án dự phòng | C | main | 2:00 |
+| `KeyboardTracker().read(key=-1)` cùng chữ ký, phương án dự phòng; phím `i/j/k/l`, `u/o`, `space` (xem `common.py`) | C | main | 2:00 |
 | `teleop_step(robot, tracker, object_ids, state) -> state` | C | main | 1:40 |
 | `run_benchmark(seeds, mode="detect" or "pick", noise=False) -> csv_path` | D | slide | 1:15 / 1:45 |
 
@@ -393,7 +393,7 @@ def pixel_to_world(u, v, d, view, proj, W, H):
 | 0:35–0:55 | Ánh xạ mốc 9 `(x, y)` ảnh → `(x, y)` robot trong `WORKSPACE`. Cỡ bàn tay (khoảng cách mốc 0–9) → z: tay to (gần camera) thì hạ xuống. Kẹp mọi giá trị trong `WORKSPACE` | Đưa tay sang phải màn hình → robot sang phải trong cửa sổ PyBullet (thống nhất chiều với A) |
 | 0:55–1:15 | Phát hiện gắp bằng hai ngưỡng + làm mượt EMA (code dưới) | Chụm tay 10 lần → đúng 10 lần đổi trạng thái, không nhấp nháy |
 | 1:15–1:40 | `teleop_step()`: đọc tay → `servo_ee` → grip lên thì `grasp`, grip xuống thì `release`. Giới hạn tốc độ 1.5 cm mỗi frame. Đo độ trễ | Điều khiển gắp 1 vật và thả vào thùng bằng tay |
-| 1:40–2:15 | **Fail-safe:** không thấy tay → robot giữ nguyên, **không thả vật**. `KeyboardTracker` (W/A/S/D di chuyển, Q/E lên xuống, Space gắp/thả). Tập kịch bản cho giám khảo | Rút tay ra → robot đứng yên ngay frame đó; bàn phím điều khiển được |
+| 1:40–2:15 | **Fail-safe:** không thấy tay → robot giữ nguyên, **không thả vật**. `KeyboardTracker` theo đúng `common.py`: `i`/`k` tiến/lùi, `j`/`l` trái/phải, `u`/`o` lên/xuống, `space` gắp/thả. **Không dùng `a`/`t`/`r`/`n`/`q`**: đã dành cho `main.py` (`a` = AUTO, `q` = thoát). Tập kịch bản cho giám khảo | Rút tay ra → robot đứng yên ngay frame đó; bàn phím điều khiển được |
 | 2:15–2:30 | Thử webcam dưới ánh sáng phòng demo, chỉnh ngưỡng nếu cần | |
 
 **Hướng dẫn kỹ thuật:**

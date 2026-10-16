@@ -4,7 +4,7 @@
     python main.py --seed 100         # failure case: two same-color cubes touching
     python main.py --keyboard         # force keyboard teleop (no webcam)
 
-Keys (focus the HUD window): a AUTO · t TELEOP · r rescan · n add cube · q quit
+Keys (focus the HUD or the PyBullet window): a AUTO · t TELEOP · r rescan · n add cube · q quit
 Keyboard teleop: i/k forward/back · j/l left/right · u/o up/down · space grip
 """
 import argparse
@@ -31,6 +31,25 @@ CAM_REFRESH = 6                   # re-render the overhead view every N frames o
 MAX_PICK_FAILS = 2                # consecutive failed grasps before asking the operator
 WINDOW = "VinSort HUD"
 DRAW = {"red": (40, 40, 230), "green": (60, 190, 60), "blue": (230, 90, 40)}   # BGR
+
+
+def read_key():
+    """One key code or -1, from the HUD (cv2) or the PyBullet window.
+
+    On macOS the PyBullet GUI pumps the Cocoa event loop itself and swallows key events,
+    so cv2.waitKey alone often never sees them; p.getKeyboardEvents() does.
+    """
+    k = cv2.waitKey(1)
+    if k != -1:
+        return k & 0xFF
+    events = p.getKeyboardEvents()
+    for code, state in events.items():
+        if state & p.KEY_WAS_TRIGGERED and code < 256:
+            return code
+    for code, state in events.items():                # hold a move key to keep moving
+        if state & p.KEY_IS_DOWN and code in stubs.MOVE_KEYS:
+            return code
+    return -1
 
 
 def load_teleop(force_keyboard):
@@ -130,9 +149,9 @@ class App:
         if self.frame_i % STEPS_PER_FRAME:
             return
         self.draw_hud()
-        k = cv2.waitKey(1)
+        k = read_key()
         if k != -1:
-            self.pending_key = k & 0xFF
+            self.pending_key = k
 
     # ---------- modes ----------
     def enter_auto(self, msg="scanning"):
@@ -189,8 +208,7 @@ class App:
         while not self.quit:
             k, self.pending_key = self.pending_key, -1
             if k == -1:
-                k = cv2.waitKey(1)
-                k = -1 if k == -1 else k & 0xFF
+                k = read_key()
             if k in (ord("q"), ord("a"), ord("r"), ord("t"), ord("n")):
                 self.handle_key(k)
                 k = -1
@@ -234,7 +252,7 @@ def main():
     args = ap.parse_args()
 
     app = App(args)
-    print(f"[main] perception: {PERCEPTION}. Focus the '{WINDOW}' window for keys.")
+    print(f"[main] perception: {PERCEPTION}. Focus the '{WINDOW}' or PyBullet window for keys.")
     if args.auto:
         app.enter_auto()
     try:
