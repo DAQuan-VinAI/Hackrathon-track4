@@ -4,7 +4,7 @@ Keys (OpenCV HUD window OR PyBullet window):
   a AUTO (home, rescan) | t TELEOP | r rescan | n add a random part | q quit
   TELEOP keyboard fallback: i/k j/l u/o move, space grip
   Free POV: 1/2 rotate left/right | 3/4 tilt | 5/6 zoom in/out | 0 reset view
-  v toggle the multi-view window (front / side / top / gripper close-up)
+  v toggle 4-camera view (side / gripper / front / top); enabled at launch
   Mouse (PyBullet): Ctrl+left drag rotate, middle drag pan, wheel zoom, left drag = move a part.
 Teleop controls follow the current camera yaw: hand right is always screen right.
 """
@@ -43,13 +43,12 @@ class Orchestrator:
         self.log = []             # mode transitions, for the smoke test
         self.mv = None
         if show and os.environ.get("VINSORT_MV", "1") == "1":
-            self.mv = multiview.MultiView(self.robot)
-            controller.ON_STEP = self._refresh_during_motion
+            self.mv = multiview.MultiView(self.robot)  # show all four angles immediately
+            controller.ON_STEP = self._refresh_views
 
-    def _refresh_during_motion(self):
-        """Keep multi-view live while a blocking pick_and_place runs (self-throttled)."""
-        self.mv.update()
-        cv2.waitKey(1)
+    def _refresh_views(self):
+        if self.mode != "TELEOP":
+            self.mv.update()  # AUTO: synchronous four POVs; no camera input to delay
 
     # -- perception -----------------------------------------------------------------
     def scan(self):
@@ -101,7 +100,7 @@ class Orchestrator:
             scene.reset_view()
             return
         if self.mv and key == ord("v"):
-            self.mv.toggle()
+            self.msg = f"CAMERA: {self.mv.toggle()}"
             return
         if key == ord("a"):
             self.set_mode("AUTO")
@@ -130,6 +129,8 @@ class Orchestrator:
         elif self.mode == "TELEOP":
             self.tstate = teleop.teleop_step(self.robot, self.tracker, self.ids, self.tstate,
                                              key=key, realtime=self.realtime)
+            if self.mv:
+                self.mv.update(teleop=True)  # render after servo, not before reading the next webcam frame
         else:  # DONE: keep stepping so judges can drag parts with the mouse
             for _ in range(8):
                 p.stepSimulation()
@@ -165,7 +166,7 @@ class Orchestrator:
         cv2.putText(bar, line1, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.putText(bar, self.msg, (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.imshow("VinSort HUD", np.vstack([bar, img]))
-        if self.mv:
+        if self.mv and self.mode != "TELEOP":
             self.mv.update()
         frame = self.tstate.get("frame")
         if self.mode == "TELEOP" and frame is not None:

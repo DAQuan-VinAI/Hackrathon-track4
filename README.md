@@ -13,6 +13,11 @@ pip install -r requirements.txt
 
 ## Chạy
 
+Trên máy Windows demo: chạy `start_vinsort.bat` thay vì `python main.py` để PyBullet ưu tiên RTX 3060.
+Kiểm tra console: `Renderer = NVIDIA ...`. Launcher Windows x64 dùng Python 3.11; venv mới cần chạy
+`build_gpu_launcher.bat` (yêu cầu Visual Studio 2022 C++ tools + Python 3.11 development files).
+Không có GPU launcher, file khởi động dùng Python bình thường; MediaPipe vẫn chạy CPU.
+
 | Lệnh | Việc |
 |---|---|
 | `python main.py` | Demo: PyBullet GUI + HUD OpenCV + webcam |
@@ -28,10 +33,14 @@ pip install -r requirements.txt
 
 `a` AUTO · `t` TELEOP · `r` quét lại · `n` thêm vật · `q` thoát.
 Teleop bàn phím: `i/k` xa/gần, `j/l` trái/phải, `u/o` lên/xuống, `space` gắp/thả.
+Teleop nay với tới thùng ở `y=-0.50`: sau khi gắp, nâng tay lên ~0.30 m trước khi di chuyển sang thùng;
+hệ thống tự giữ cao khi vừa cầm vật vừa đi ngang. Đến thùng thì hạ, rồi thả.
 
-Góc nhìn: cửa sổ **VinSort Multi-View** mở sẵn 4 góc (trước / bên / trên / cận tay gắp), phím `v` bật/tắt.
-`1/2` xoay · `3/4` nghiêng · `5/6` zoom · `0` về góc mặc định.
-Tắt hẳn multi-view (máy yếu): `set VINSORT_MV=0` trước khi chạy.
+**Multi-View bật sẵn:** một cửa sổ hiển thị đồng thời 4 góc: bên / tay gắp / trước / trên.
+Cả 4 góc cập nhật cùng lúc gần realtime (~20 FPS trên RTX 3060; 128×96 mỗi ô, cửa sổ phóng to nên ảnh mềm).
+Bấm `v` để tắt/bật cả cửa sổ.
+`1/2` xoay · `3/4` nghiêng · `5/6` zoom · `0` về góc mặc định ở cửa sổ PyBullet.
+Tắt hẳn multi-view nếu máy vẫn lag: `set VINSORT_MV=0` trước khi chạy.
 
 Giám khảo kéo vật: **chuột trái kéo thẳng** trong cửa sổ PyBullet (Ctrl + kéo là xoay camera).
 

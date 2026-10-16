@@ -92,10 +92,33 @@ def test_auto_e2e_and_hybrid_handoff():
     assert o.in_correct_bin() == 4 and o.sorted == 4          # 4 normal parts sorted, 2 touching left
 
 
+def test_teleop_reaches_bin():
+    s = build_scene(0, gui=False)
+    robot = s["robot"]
+    ids = [o["id"] for o in s["objects"]]
+    target = s["objects"][0]
+    x, y, _ = p.getBasePositionAndOrientation(target["id"])[0]
+    bx, by = BINS[target["color"]]
+    assert WORKSPACE["y"][0] < by < WORKSPACE["y"][1]
+    # Pick a real cube, carry it above the bin wall, then descend and release.
+    script = [((x, y, 0.20), False)] * 70 + [((x, y, CUBE + 0.01), False)] * 40
+    script += [((x, y, CUBE + 0.01), True)] * 3
+    script += [((bx, by, 0.35), True)] * 110
+    script += [((bx, by, 0.20), True)] * 40
+    script += [((bx, by, 0.20), False)] * 3
+    state, tracker = {}, FakeTracker(script)
+    for _ in script:
+        state = teleop.teleop_step(robot, tracker, ids, state)
+    assert state["cid"] is None
+    for _ in range(240):
+        p.stepSimulation()
+    pos = p.getBasePositionAndOrientation(target["id"])[0]
+    assert abs(pos[0] - bx) < 0.07 and abs(pos[1] - by) < 0.07, pos
+
+
 def test_full_hybrid_story():
-    """Failure seed: AUTO sorts the sure parts, hands off, operator separates the touching pair
-    (hand lost mid-way -> hold + keep part), 'a' -> AUTO sorts the rest. Bins are outside the
-    teleop safe box by design: the operator only fixes the ambiguity, the robot does the sorting."""
+    """Failure seed: AUTO sorts sure parts, operator separates the touching pair,
+    lost hand keeps grip, 'a' resumes AUTO to sort the remaining objects."""
     import random
     from scene import random_free_xy
     o = Orchestrator(100, FakeTracker([(None, False)]), realtime=False, show=False)

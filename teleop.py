@@ -15,7 +15,7 @@ from common import WORKSPACE
 GAIN = 3.0              # hand motion -> robot motion amplification around the frame center
 # Joystick mode: hand offset from the frame center = velocity (dead zone in the middle = stop).
 DEAD = 0.08             # dead-zone half-size, fraction of the frame
-V_MAX = 0.05           # max XY speed (m/frame, ~0.36 m/s at 30 FPS) at the frame edge
+V_MAX = 0.1           # requested joystick sensitivity; STEP_LIMIT bounds actual EE target delta
 STEP_LIMIT = 0.045      # max EE target change per frame (m): no jump when entering TELEOP
 EMA = 0.3               # weight of the new sample
 GRIP_ON, GRIP_OFF = 0.25, 0.40   # pinch ratio thresholds (two thresholds: no flicker)
@@ -133,7 +133,11 @@ class HandTracker:
         import cv2
         import mediapipe as mp
         self.cv2, self.mp = cv2, mp
-        self.cap = cv2.VideoCapture(device)
+        self.cap = cv2.VideoCapture(device, cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY)
+        if not self.cap.isOpened() and os.name == "nt":
+            self.cap.release()
+            self.cap = cv2.VideoCapture(device)  # some virtual webcams support MSMF only
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # drop stale camera frames where supported
         if not self.cap.isOpened():
             raise RuntimeError("webcam not available")
         self.recognizer = None
@@ -295,7 +299,15 @@ def teleop_step(robot, tracker, object_ids, state, key=-1, realtime=False):
     if xyz is None:
         servo_ee(robot, state["target"], realtime=realtime)  # hold position, keep the part
         return state
-    state["target"] = rate_limit(state["target"], clamp_ws(xyz))
+    goal = clamp_ws(xyz)
+    # Keep the arm above the bin walls while traveling sideways with a part.
+    # The operator can lower after reaching the bin; direct low sweeps would hit its walls.
+    if state.get("cid") is not None and np.linalg.norm(goal[:2] - state["target"][:2]) > 0.003:
+        from common import RELEASE_Z
+        goal[2] = max(goal[2], RELEASE_Z + 0.10)
+        if hasattr(tracker, "z"):
+            tracker.z = float(goal[2])
+    state["target"] = rate_limit(state["target"], goal)
     servo_ee(robot, state["target"], realtime=realtime)
     if grip and not state["grip"]:
         state["cid"] = grasp(robot, object_ids)

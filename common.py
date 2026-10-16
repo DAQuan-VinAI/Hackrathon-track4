@@ -5,7 +5,8 @@ COLORS = ["red", "green", "blue"]                 # 3 part types, one bin per co
 RGBA = {"red": (1, 0, 0, 1), "green": (0, 1, 0, 1), "blue": (0, 0, 1, 1)}
 CUBE = 0.04                                       # cube edge length (m)
 TABLE_Z = 0.0                                     # objects rest on the ground plane, no table.urdf
-WORKSPACE = dict(x=(0.35, 0.75), y=(-0.25, 0.25), z=(0.03, 0.35))  # teleop safe box
+# ponytail: extend TELEOP to the bins at y=-0.50; PyBullet IK/scene collisions still bound reach.
+WORKSPACE = dict(x=(0.25, 0.75), y=(-0.58, 0.45), z=(0.03, 0.45))  # bin reach + raised transfer height
 SPAWN = dict(x=(0.40, 0.68), y=(-0.22, 0.22))     # spawn area (inside camera view and reach)
 BINS = {"red": (0.25, -0.50), "green": (0.40, -0.50), "blue": (0.55, -0.50)}  # xy, outside camera view
 BIN_HALF = 0.07                                   # inner half-size of a bin (m)
