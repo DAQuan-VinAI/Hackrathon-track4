@@ -14,6 +14,12 @@ Noise mode: brightness x U[0.7, 1.3] + Gaussian sigma=8 (0-255), fixed noise see
 import argparse
 import csv
 import os
+import json
+import time
+import platform
+import hashlib
+import importlib.metadata
+from pathlib import Path
 
 import numpy as np
 import pybullet as p
@@ -49,10 +55,14 @@ def match(dets, gts):
 
 def run_detect(seed, noise):
     s = build_scene(seed, gui=False)
+    t0 = time.perf_counter()
     rgb, depth, _ = perception.capture()
+    capture_ms = (time.perf_counter() - t0) * 1000
     if noise:
         rgb = add_noise(rgb, seed)
+    t0 = time.perf_counter()
     dets = perception.detect(rgb, depth)
+    detect_ms = (time.perf_counter() - t0) * 1000
     gts = [(o["color"], p.getBasePositionAndOrientation(o["id"])[0]) for o in s["objects"]]
     pairs, fp = match(dets, gts)
     errs = [np.hypot(d.xyz[0] - g[0], d.xyz[1] - g[1]) * 1000 for d, g in pairs]
@@ -62,7 +72,8 @@ def run_detect(seed, noise):
     # recall counts it as missed by design; the flag is what we measure there.
     return dict(seed=seed, noise=int(noise), n_gt=len(gts), n_det=len(dets), matched=len(pairs), fp=fp,
                 xy_mean_mm=np.mean(errs) if errs else np.nan, xy_max_mm=np.max(errs) if errs else np.nan,
-                z_mean_mm=np.mean(zerr) if zerr else np.nan, flags=flags, errs=errs)
+                z_mean_mm=np.mean(zerr) if zerr else np.nan, flags=flags, errs=errs,
+                capture_ms=capture_ms, detect_ms=detect_ms)
 
 
 def run_pick(seed, noise):
@@ -92,20 +103,30 @@ def run_pick(seed, noise):
         x, y, _ = p.getBasePositionAndOrientation(o["id"])[0]
         bx, by = BINS[o["color"]]
         correct += abs(x - bx) < BIN_HALF and abs(y - by) < BIN_HALF
-    cyc = (controller.STEPS - steps0) / 240 / max(picks, 1)
+    steps = controller.STEPS - steps0
+    cyc = steps / 240 / picks if picks else float("nan")
     return dict(seed=seed, noise=int(noise), n_parts=len(ids), picked=picks, grasp_fail=fails,
-                skipped_suspicious=skipped, correct_bin=correct, cycle_s_sim=cyc)
+                skipped_suspicious=skipped, correct_bin=correct, cycle_s_sim=cyc,
+                remaining_parts=len(ids) - correct, sim_steps=steps)
 
 
 def run_benchmark(seeds, mode="detect", noise=False, out="results"):
     os.makedirs(out, exist_ok=True)
     rows = [(run_detect if mode == "detect" else run_pick)(s, noise) for s in seeds]
+    if not rows:
+        raise ValueError("At least one seed is required")
     path = os.path.join(out, f"{mode}{'_noise' if noise else ''}.csv")
     keys = [k for k in rows[0] if k != "errs"]
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, keys, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
+    if mode == "detect":
+        with open(Path(out) / f"xy_pairs{'_noise' if noise else ''}.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["seed", "noise", "pair_index", "xy_error_mm"])
+            for row in rows:
+                w.writerows((row["seed"], row["noise"], i, e) for i, e in enumerate(row["errs"]))
     return path, rows
 
 
@@ -136,11 +157,12 @@ def summarize_pick(rows, label):
     if fail:
         lines.append(f"  failure seeds: correct-bin {sum(r['correct_bin'] for r in fail)}/"
                      f"{sum(r['n_parts'] for r in fail)}, suspicious detections left "
-                     f"{sum(r['skipped_suspicious'] for r in fail)} (merged blobs, handed to operator)")
+                     f"{sum(r['skipped_suspicious'] for r in fail)} blobs; remaining GT parts "
+                     f"{sum(r['remaining_parts'] for r in fail)} (operator assistance required, not measured here)")
     return "\n".join(lines)
 
 
-def plot(errs_clean, errs_noise, path="results/xy_error.png"):
+def plot(errs_clean, errs_noise, path="results/xy_error.png", normal_count=20):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -148,7 +170,7 @@ def plot(errs_clean, errs_noise, path="results/xy_error.png"):
     ax.boxplot([errs_clean, errs_noise])
     ax.set_xticks([1, 2], ["clean", "noise"])
     ax.set_ylabel("XY localization error (mm)")
-    ax.set_title("VinSort detection error, seeds 0-19 (sim)")
+    ax.set_title(f"VinSort detection error, {normal_count} normal seeds (sim)")
     ax.axhline(5, ls="--", c="r", lw=1, label="5 mm target")
     ax.legend()
     fig.tight_layout()
@@ -160,23 +182,38 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["detect", "pick", "all"], default="all")
     ap.add_argument("--quick", action="store_true", help="10 normal seeds, no noise for pick")
+    ap.add_argument("--out", default="results", help="output folder")
     a = ap.parse_args()
     normal = SEEDS_NORMAL[:10] if a.quick else SEEDS_NORMAL
     seeds = normal + SEEDS_FAILURE
     report = []
     if a.mode in ("detect", "all"):
-        _, clean = run_benchmark(seeds, "detect")
-        _, noisy = run_benchmark(seeds, "detect", noise=True)
+        _, clean = run_benchmark(seeds, "detect", out=a.out)
+        _, noisy = run_benchmark(seeds, "detect", noise=True, out=a.out)
         t1, e1 = summarize_detect(clean, "detect clean")
         t2, e2 = summarize_detect(noisy, "detect noise")
-        report += [t1, t2, "  chart: " + plot(e1, e2)]
+        report += [t1, t2]
     if a.mode in ("pick", "all"):
-        _, pk = run_benchmark(seeds, "pick")
+        _, pk = run_benchmark(seeds, "pick", out=a.out)
         report.append(summarize_pick(pk, "pick clean"))
         if not a.quick:
-            _, pkn = run_benchmark(normal, "pick", noise=True)
+            _, pkn = run_benchmark(normal, "pick", noise=True, out=a.out)
             report.append(summarize_pick(pkn, "pick noise"))
+    if a.mode in ("detect", "all"):
+        report.append("  chart: " + plot(e1, e2, str(Path(a.out) / "xy_error.png"), len(normal)))
     text = "\n".join(report)
     print(text)
-    with open("results/summary.txt", "w", encoding="utf-8") as f:
+    with open(Path(a.out) / "summary.txt", "w", encoding="utf-8") as f:
         f.write(text + "\n")
+    sources = ["benchmark.py", "common.py", "scene.py", "perception.py", "controller.py"]
+    manifest = dict(python=platform.python_version(), platform=platform.platform(),
+                    numpy=np.__version__, pybullet_api=p.getAPIVersion(),
+                    packages={name: importlib.metadata.version(name) for name in
+                              ("pybullet", "numpy", "matplotlib")},
+                    mode=a.mode, quick=a.quick, normal_seeds=normal, failure_seeds=SEEDS_FAILURE,
+                    noise="RGB brightness U[0.7,1.3] + Gaussian sigma=8; depth unchanged",
+                    sources={name: hashlib.sha256((Path(__file__).parent / name).read_bytes()).hexdigest()
+                             for name in sources})
+    (Path(a.out) / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    if p.isConnected():
+        p.disconnect()

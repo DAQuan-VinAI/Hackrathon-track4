@@ -1,0 +1,10 @@
+﻿Chỉ số,Sạch,Nhiễu
+Recall phát hiện,120/120,120/120
+False positive,0,0
+XY trung bình / trung vị / max (mm),2.55 / 2.63 / 4.82,2.55 / 2.63 / 4.82
+"z trung bình (mm), mặt trên",-0.011,-0.011
+Cờ lỗi đúng (seed lỗi),5/5,5/5
+Cờ báo nhầm (20 seed thường),0,0
+Vật vào đúng thùng (seed thường),120/120,120/120
+Lượt gắp hụt,0,0
+Chu kỳ có trọng số (giây mô phỏng/vật),4.44,4.44

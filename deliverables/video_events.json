@@ -1,0 +1,68 @@
+{
+  "fps": 12,
+  "frames": 1440,
+  "duration_s": 120.0,
+  "scripted_input": true,
+  "events": [
+    {
+      "video_s": 0.0,
+      "event": "normal_start",
+      "mode": "AUTO",
+      "correct": 0
+    },
+    {
+      "video_s": 35.5,
+      "event": "normal_6_of_6",
+      "mode": "DONE",
+      "correct": 6
+    },
+    {
+      "video_s": 39.5,
+      "event": "scripted_part_move",
+      "mode": "DONE",
+      "correct": 5
+    },
+    {
+      "video_s": 48.0,
+      "event": "rescan_recovered",
+      "mode": "DONE",
+      "correct": 6
+    },
+    {
+      "video_s": 51.0,
+      "event": "failure_seed_100",
+      "mode": "AUTO",
+      "correct": 0
+    },
+    {
+      "video_s": 73.83,
+      "event": "handoff_4_of_6",
+      "mode": "TELEOP",
+      "correct": 4
+    },
+    {
+      "video_s": 83.67,
+      "event": "scripted_hand_lost_holding",
+      "mode": "TELEOP",
+      "correct": 4
+    },
+    {
+      "video_s": 92.0,
+      "event": "pair_separated",
+      "mode": "TELEOP",
+      "correct": 4
+    },
+    {
+      "video_s": 107.5,
+      "event": "hybrid_recovered_6_of_6",
+      "mode": "DONE",
+      "correct": 6
+    },
+    {
+      "video_s": 120.0,
+      "event": "end",
+      "mode": "DONE",
+      "correct": 6
+    }
+  ]
+}

@@ -1,4 +1,10 @@
 .venv/
+.venv-sim/
+.build/
 __pycache__/
 debug/
 results/
+!deliverables/results/
+!deliverables/results/**
+!deliverables/debug/
+!deliverables/debug/**
