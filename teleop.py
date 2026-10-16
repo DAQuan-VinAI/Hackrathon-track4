@@ -13,8 +13,9 @@ teleop_step(robot, tracker, object_ids, state) -> state, with the key in state["
 import time
 
 import numpy as np
+import pybullet as p
 
-from common import WORKSPACE
+from common import CUBE, WORKSPACE
 
 STEP_LIMIT = 0.015      # max EE target change per frame (m): no jump when entering TELEOP
 EMA = 0.3               # weight of the new palm sample: smoother but adds lag
@@ -26,6 +27,18 @@ GRIP_ON, GRIP_OFF = 0.25, 0.40    # pinch ratio thresholds, fallback when the ha
 GRIP_FRAMES = 3                   # a grab/release must be seen this many frames in a row
 KEY_STEP = 0.01                   # keyboard: one key event moves 1 cm (main.read_key repeats held keys)
 CENTER = ((WORKSPACE["x"][0] + WORKSPACE["x"][1]) / 2, (WORKSPACE["y"][0] + WORKSPACE["y"][1]) / 2)
+
+# Assisted grab (PHAN_CONG 6C "Nếu trễ thì cắt": grab gesture -> the arm descends, grabs, lifts).
+# grasp() needs the EE within 4 cm of the cube center, which is hard to hit by hand from one view.
+ASSIST_XY = 0.06        # grab gesture with a loose cube this close in XY: the arm finishes the grab
+GRASP_DZ = 0.008        # stop this far above the top face (same as controller.pick_and_place)
+CARRY_Z = 0.15          # lift to this height after an assisted grab
+ASSIST_FRAMES = 120     # give up an assisted grab after ~4 s
+
+# Side view for the HUD (GUI only): camera on the +y side, so height above the table is visible.
+# Image right == world -x (toward the robot base).
+SIDE = dict(eye=(0.55, 1.05, 0.20), target=(0.55, 0.0, 0.18), up=(0, 0, 1), fov=32, W=400, H=400)
+SIDE_EVERY = 2          # render every N teleop frames (hardware OpenGL, a few ms)
 
 
 def clamp_ws(xyz):
@@ -222,21 +235,150 @@ def teleop_step(robot, tracker, object_ids, state):
     xyz, grip, frame, _ = tracker.read(state.get("key", -1))
     state["frame"] = frame
     state["hand"] = xyz is not None
+    near = nearest_cube(ee_pos(robot), object_ids)
     if xyz is None:
-        servo_ee(robot, state["target"])                  # hold position, keep the part
+        servo_ee(robot, state["target"])                  # hold position, keep the part (assist paused too)
         state["msg"] = "no hand: holding" + (" + part" if state.get("cid") is not None else "")
-        return state
-    state["target"] = rate_limit(state["target"], clamp_ws(xyz))
-    servo_ee(robot, state["target"])
-    if grip and not state["grip"]:
-        state["cid"] = grasp(robot, object_ids)
-        state["msg"] = "grasped" if state["cid"] is not None else "nothing within 4 cm"
-    elif not grip and state["grip"]:
-        release(state["cid"])
-        state["cid"], state["msg"] = None, "released"
-    state["grip"] = grip
+    elif state.get("assist") is not None:
+        if grip:
+            _assist_step(robot, tracker, state)
+        else:                                             # open palm cancels the assisted grab
+            state["assist"], state["msg"] = None, "auto-grab cancelled"
+            _sync_tracker(tracker, state["target"])
+        state["grip"] = grip
+    else:
+        state["target"] = rate_limit(state["target"], clamp_ws(xyz))
+        servo_ee(robot, state["target"])
+        if grip and state.get("cid") is None:             # suction stays on while the fist is held
+            state["cid"] = grasp(robot, object_ids)
+            if state["cid"] is not None:
+                state["msg"] = "grasped"
+            elif near is not None and near[0] < ASSIST_XY:
+                state["assist"] = {"id": near[1], "frames": 0, "phase": "align"}
+                state["msg"] = "auto-grab"
+            elif not state["grip"]:
+                dist = "no cube" if near is None else f"nearest cube {near[0] * 100:.0f} cm"
+                state["msg"] = f"move closer ({dist}, need < {ASSIST_XY * 100:.0f} cm)"
+        elif not grip and state["grip"]:
+            release(state["cid"])
+            state["cid"], state["msg"] = None, "released"
+        state["grip"] = grip
     state["latency_ms"] = (time.perf_counter() - tracker.t0) * 1000
+    _draw_aids(robot, state, near)
     return state
+
+
+def nearest_cube(ee, object_ids):
+    """(xy distance, id, center xyz) of the closest cube resting in the workspace, or None.
+    Cubes already in a bin (outside WORKSPACE) or lifted are ignored."""
+    best = None
+    for o in object_ids:
+        pos = p.getBasePositionAndOrientation(o)[0]
+        if pos[2] > 2 * CUBE or pos[1] < WORKSPACE["y"][0] - 0.03:
+            continue
+        d = float(np.hypot(pos[0] - ee[0], pos[1] - ee[1]))
+        if best is None or d < best[0]:
+            best = (d, o, pos)
+    return best
+
+
+def _sync_tracker(tracker, xyz):
+    """After the arm moved on its own, continue hand/keyboard control from where it is."""
+    if hasattr(tracker, "pos"):
+        tracker.pos = clamp_ws(xyz)
+
+
+def _assist_step(robot, tracker, state):
+    """Assisted grab: align over the cube at the current height, descend, attach, lift to CARRY_Z."""
+    from controller import ee_pos, grasp, servo_ee
+    a = state["assist"]
+    a["frames"] += 1
+    x, y, z = p.getBasePositionAndOrientation(a["id"])[0]
+    ee = ee_pos(robot)
+    if a["phase"] == "align":
+        goal = (x, y, state["target"][2])
+        if np.hypot(ee[0] - x, ee[1] - y) < 0.005:
+            a["phase"] = "descend"
+    elif a["phase"] == "descend":
+        goal = (x, y, z + CUBE / 2 + GRASP_DZ)
+        if np.linalg.norm(ee - goal) < 0.01:
+            state["cid"] = grasp(robot, [a["id"]])
+            if state["cid"] is not None:
+                a["phase"], state["msg"] = "lift", "grasped (auto)"
+    else:
+        goal = (state["target"][0], state["target"][1], max(CARRY_Z, state["target"][2]))
+        if abs(ee[2] - goal[2]) < 0.01:
+            state["assist"] = None
+            _sync_tracker(tracker, goal)
+    state["target"] = rate_limit(state["target"], clamp_ws(goal))
+    servo_ee(robot, state["target"])
+    if state.get("assist") is not None and a["frames"] > ASSIST_FRAMES:
+        state["assist"], state["msg"] = None, "auto-grab failed"
+        _sync_tracker(tracker, state["target"])
+
+
+# ---------------------------------------------------------------- visual aids (GUI only)
+
+_LINE = {"id": None, "t": 0.0}
+
+
+def _gui():
+    return p.getConnectionInfo().get("connectionMethod") == p.GUI
+
+
+def _project(pt, view, proj, W, H):
+    P = np.array(proj).reshape(4, 4, order="F")
+    V = np.array(view).reshape(4, 4, order="F")
+    clip = P @ V @ np.array([*pt, 1.0])
+    ndc = clip[:3] / clip[3]
+    return int((ndc[0] + 1) / 2 * W), int((1 - ndc[1]) / 2 * H)
+
+
+def _draw_aids(robot, state, near):
+    """Drop line from the EE to the floor in the PyBullet window (green = a cube can be grabbed)
+    and a side view in state["side"] (BGR) for the HUD. No-op in DIRECT mode (tests, benchmark)."""
+    if not _gui():
+        return
+    import cv2
+    from controller import ee_pos
+    ee = ee_pos(robot)
+    holding = state.get("cid") is not None
+    ok = holding or (near is not None and near[0] < ASSIST_XY)
+    rgb = (0.1, 0.8, 0.1) if ok else (0.9, 0.1, 0.1)
+
+    now = time.perf_counter()                             # lifeTime clears the line once TELEOP ends
+    kw = dict(lineColorRGB=rgb, lineWidth=3, lifeTime=0.5)
+    if _LINE["id"] is not None and now - _LINE["t"] < 0.4:
+        kw["replaceItemUniqueId"] = _LINE["id"]
+    _LINE["id"], _LINE["t"] = p.addUserDebugLine(ee, (ee[0], ee[1], 0.0), **kw), now
+
+    state["side_i"] = state.get("side_i", -1) + 1
+    if state["side_i"] % SIDE_EVERY:
+        return
+    W, H = SIDE["W"], SIDE["H"]
+    view = p.computeViewMatrix(SIDE["eye"], SIDE["target"], SIDE["up"])
+    proj = p.computeProjectionMatrixFOV(SIDE["fov"], W / H, 0.1, 3.0)
+    _, _, rgba, _, _ = p.getCameraImage(W, H, view, proj, renderer=p.ER_BULLET_HARDWARE_OPENGL,
+                                        flags=p.ER_NO_SEGMENTATION_MASK)
+    img = cv2.cvtColor(np.reshape(rgba, (H, W, 4))[:, :, :3].astype(np.uint8), cv2.COLOR_RGB2BGR)
+    bgr = tuple(int(255 * c) for c in rgb[::-1])
+    top, floor = _project(ee, view, proj, W, H), _project((ee[0], ee[1], 0.0), view, proj, W, H)
+    cv2.line(img, top, floor, bgr, 2)
+    cv2.circle(img, top, 6, bgr, 2)
+    if near is not None and not holding:
+        cv2.circle(img, _project(near[2], view, proj, W, H), 14, (0, 255, 255), 2)
+    cv2.putText(img, "SIDE VIEW (robot on the right)", (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (40, 40, 40), 1)
+    cv2.putText(img, f"z = {ee[2]:.2f} m", (8, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (40, 40, 40), 2)
+    if holding:
+        hint = "HOLDING - open palm to release"
+    elif state.get("assist") is not None:
+        hint = "AUTO-GRAB..."
+    elif near is not None:
+        hint = f"cube {near[0] * 100:.0f} cm away" + (" - FIST to grab" if ok else "")
+    else:
+        hint = "no cube in the workspace"
+    cv2.putText(img, hint, (8, H - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.55, bgr, 2)
+    state["side"] = img
 
 
 if __name__ == "__main__":
