@@ -1,0 +1,22 @@
+[detect clean] seeds 20 normal + 5 failure
+  recall 120/120 = 100.0%
+  false positive 0
+  XY error mm: mean 2.55 median 2.63 max 4.82
+  Z error mm (top face vs CUBE): mean -0.01
+  suspicious false alarm on normal seeds: 0
+  suspicious hit on failure seeds: 5/5
+[detect noise] seeds 20 normal + 5 failure
+  recall 120/120 = 100.0%
+  false positive 0
+  XY error mm: mean 2.55 median 2.63 max 4.82
+  Z error mm (top face vs CUBE): mean -0.01
+  suspicious false alarm on normal seeds: 0
+  suspicious hit on failure seeds: 5/5
+  chart: results/xy_error.png
+[pick clean] correct-bin 120/120 = 100.0% (normal seeds)
+  grasp failures 0
+  cycle time in SIM (team-chosen speed, not real robot): 4.44 s/part
+  failure seeds: correct-bin 20/30, skipped as suspicious 5 (handed to operator)
+[pick noise] correct-bin 120/120 = 100.0% (normal seeds)
+  grasp failures 0
+  cycle time in SIM (team-chosen speed, not real robot): 4.44 s/part
